@@ -1,0 +1,19 @@
+[project]
+name = "sentarc-ai"
+version = "0.1.0"
+description = "Unified LLM client and types — Python port of @sentarc-labs/sentarc-ai"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools]
+# sentarc-mono: files live directly in src/, mapped to sentarc_ai package
+package-dir = {"sentarc_ai" = "src"}
+packages = ["sentarc_ai", "sentarc_ai.providers"]
