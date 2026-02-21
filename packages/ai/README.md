@@ -21,6 +21,9 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Provider-Specific Options (stream/complete)](#provider-specific-options-streamcomplete)
   - [Streaming Thinking Content](#streaming-thinking-content)
 - [Stop Reasons](#stop-reasons)
+- [Error Handling](#error-handling)
+  - [Aborting Requests](#aborting-requests)
+  - [Continuing After Abort](#continuing-after-abort)
 - [APIs, Models, and Providers](#apis-models-and-providers)
   - [Querying Models](#querying-models)
   - [Custom Models](#custom-models)
@@ -221,7 +224,7 @@ All streaming events emitted during assistant message generation (inherited from
 | `tool_use_delta` | Tool arguments streaming | `id`: Tool identifier, `partial_input`: JSON string chunk |
 | `tool_use_end` | Tool call complete | `tool_use`: Complete parsed `ToolUseContent` object with `id`, `name`, `arguments` |
 | `stop` | Stream complete | `stop_reason`: Stop reason ("stop", "length", "tool_use", "content_filter"), `usage`: `TokenUsage` object |
-| `error` | Error occurred | `error`: String describing the error type and message |
+| `error` | Error or Abort occurred | `error`: `AssistantMessage` object with partial content collected before failure, `reason`: "error" or "aborted" |
 
 ## Image Input
 
@@ -304,6 +307,65 @@ Every completion ends with a `stop` event indicating how generation ended inside
 - `"length"` - Hit maximum token limit
 - `"tool_use"` - Model called tools and yielded control
 - `"content_filter"` - Output blocked by provider filters
+
+## Error Handling
+
+When a request ends with an error (including aborts and tool call validation errors), the streaming API correctly catches the exception, evaluates the state, and emits an `ErrorEvent` with the partial content collected up to the failure point:
+
+```python
+# In streaming
+async for event in stream(model, context):
+    if event.type == 'error':
+        # event.reason is either "error" or "aborted"
+        # event.error is the AssistantMessage with partial content
+        print(f"Error ({event.reason}):", event.error.error_message)
+        print("Partial content:", event.error.content)
+
+# The final message retrieved via complete() or complete_simple() will contain the error details
+message = await complete(model, context)
+if message.stop_reason in ('error', 'aborted'):
+    print("Request failed:", message.error_message)
+    # message.content contains any partial content received before the error
+    # message.usage contains partial token counts and costs
+```
+
+### Aborting Requests
+
+In Python, request termination is natively handled via `asyncio.CancelledError`. When an external task loop or timeout cancels the running stream generator, the port catches the cancellation and parses it cleanly into an `aborted` stop reason:
+
+```python
+import asyncio
+from sentarc_ai import resolve_model, stream
+
+model = resolve_model('openai', 'gpt-4o-mini')
+
+async def run_stream():
+    s = stream(model, context)
+    try:
+        async for event in s:
+            if event.type == 'text_delta':
+                print(event.text, end="")
+            elif event.type == 'error':
+                print(f"\n[{event.reason.capitalize()}]:", event.error.error_message)
+    except asyncio.CancelledError:
+        # Task was cancelled externally
+        pass
+
+# Abort by cancelling the task after 2 seconds
+task = asyncio.create_task(run_stream())
+await asyncio.sleep(2)
+task.cancel()
+```
+
+### Continuing After Abort
+
+Aborted messages can inherently be added back to the conversation context using the collected partial `AssistantMessage` and continued in subsequent requests, as the `transform_messages` pipeline supports merging fragmented assistant content:
+
+```python
+# context.messages.append(message) # the partial message from the ErrorEvent
+# The next completion request simply picks up where it left off
+continuation_text, commands = await complete(model, context)
+```
 
 ## APIs, Models, and Providers
 

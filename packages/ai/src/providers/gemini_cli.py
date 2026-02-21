@@ -44,8 +44,7 @@ class GeminiCliProvider:
         
         auth_data = getattr(options, "api_key", None)
         if not auth_data:
-             yield ErrorEvent(error="Google Cloud Code Assist requires OAuth authentication (passed via apiKey).")
-             return
+             raise RuntimeError("Google Cloud Code Assist requires OAuth authentication (passed via apiKey).")
 
         try:
              # Expecting JSON string with token and projectId
@@ -53,12 +52,10 @@ class GeminiCliProvider:
              access_token = creds.get("token")
              project_id = creds.get("projectId")
         except:
-             yield ErrorEvent(error="Invalid Google Cloud Code Assist credentials format.")
-             return
+             raise RuntimeError("Invalid Google Cloud Code Assist credentials format.")
 
         if not access_token or not project_id:
-             yield ErrorEvent(error="Missing token or projectId in Google Cloud credentials.")
-             return
+             raise RuntimeError("Missing token or projectId in Google Cloud credentials.")
 
         is_antigravity = model.provider == "google-antigravity"
         base_url = model.base_url.strip() if model.base_url else None
@@ -86,7 +83,7 @@ class GeminiCliProvider:
                  last_error = e
                  continue
                  
-        yield ErrorEvent(error=f"All endpoints failed. Last error: {str(last_error)}")
+        raise RuntimeError(f"All endpoints failed. Last error: {str(last_error)}")
 
     async def _stream_from_url(self, url: str, body: Dict, headers: Dict, model: ModelDef) -> AsyncIterator[StreamEvent]:
          async with httpx.AsyncClient(timeout=120.0) as client:

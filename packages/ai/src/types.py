@@ -184,7 +184,8 @@ class MessageEndEvent:
 
 @dataclass
 class ErrorEvent:
-    error: str
+    error: "AssistantMessage"
+    reason: Literal["error", "aborted"] = "error"
     type: Literal["error"] = "error"
 
 
@@ -220,6 +221,7 @@ class AssistantMessage(Message):
     provider: Optional[str] = None
     model:    Optional[str] = None
     api:      Optional[str] = None
+    error_message: Optional[str] = None
 
 @dataclass
 class ToolResultMessage(Message):

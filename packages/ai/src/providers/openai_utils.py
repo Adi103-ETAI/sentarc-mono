@@ -390,8 +390,7 @@ async def process_responses_stream(
                  # Stream error
                  code = getattr(event, "code", "") or event.get("code")
                  msg = getattr(event, "message", "") or event.get("message")
-                 yield ErrorEvent(error=f"Error {code}: {msg}")
-                 return
+                 raise RuntimeError(f"Error {code}: {msg}")
 
     except Exception as e:
-        yield ErrorEvent(error=str(e))
+        raise RuntimeError(str(e))

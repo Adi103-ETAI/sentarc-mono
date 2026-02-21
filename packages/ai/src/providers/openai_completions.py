@@ -39,8 +39,7 @@ class OpenAIProvider:
         
         api_key = get_env_api_key(model.provider)
         if not api_key:
-            yield ErrorEvent(error=f"No API key found for {model.provider}")
-            return
+            raise RuntimeError(f"No API key found for {model.provider}")
 
         client = AsyncOpenAI(
             api_key=api_key,
@@ -139,7 +138,7 @@ class OpenAIProvider:
                          arguments=args
                     ))
                 except json.JSONDecodeError:
-                    yield ErrorEvent(error=f"Failed to parse tool arguments for call {call['id']}")
+                    raise RuntimeError(f"Failed to parse tool arguments for call {call['id']}")
             
             if text_started:
                 yield TextEndEvent(text="")
@@ -147,4 +146,4 @@ class OpenAIProvider:
             yield StopEvent(stop_reason="end_turn", usage=TokenUsage())
             
         except Exception as e:
-            yield ErrorEvent(error=str(e))
+            raise RuntimeError(str(e))

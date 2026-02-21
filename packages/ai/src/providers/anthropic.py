@@ -53,8 +53,7 @@ class AnthropicProvider:
         
         api_key = get_env_api_key("anthropic")
         if not api_key:
-             yield ErrorEvent(error="No API key found for anthropic")
-             return
+             raise RuntimeError("No API key found for anthropic")
 
         # ... imports ...
         from ..transform_messages import to_anthropic, transform_messages
@@ -151,7 +150,4 @@ class AnthropicProvider:
                         )
 
         except Exception as e:
-            yield ErrorEvent(error=str(e))
-
-
-
+            raise RuntimeError(str(e))

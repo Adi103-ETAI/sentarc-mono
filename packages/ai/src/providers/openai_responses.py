@@ -29,8 +29,7 @@ class OpenAIResponsesProvider:
         
         api_key = get_env_api_key(model.provider)
         if not api_key:
-            yield ErrorEvent(error=f"No API key found for {model.provider}")
-            return
+            raise RuntimeError(f"No API key found for {model.provider}")
 
         client = AsyncOpenAI(
             api_key=api_key,
@@ -64,8 +63,7 @@ class OpenAIResponsesProvider:
             # client.responses.create might not exist in all SDK versions yet, 
             # but we assume it does based on the TS port requirement.
             if not hasattr(client, "responses"):
-                 yield ErrorEvent(error="OpenAI Python SDK does not support 'responses' API yet.")
-                 return
+                 raise RuntimeError("OpenAI Python SDK does not support 'responses' API yet.")
 
             stream_resp = await client.responses.create(**params)
             
@@ -73,4 +71,4 @@ class OpenAIResponsesProvider:
                 yield event
 
         except Exception as e:
-            yield ErrorEvent(error=str(e))
+            raise RuntimeError(str(e))

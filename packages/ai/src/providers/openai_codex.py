@@ -29,8 +29,7 @@ class OpenAICodexProvider:
         
         api_key = get_env_api_key(model.provider)
         if not api_key:
-            yield ErrorEvent(error=f"No API key found for {model.provider}")
-            return
+            raise RuntimeError(f"No API key found for {model.provider}")
             
         messages = convert_responses_messages(model, context, CODEX_TOOL_CALL_PROVIDERS, include_system_prompt=False)
         
@@ -85,8 +84,7 @@ class OpenAICodexProvider:
                   async with client.stream("POST", url, json=body, headers=headers) as response:
                        if response.status_code != 200:
                             err_text = await response.aread()
-                            yield ErrorEvent(error=f"Codex API Error {response.status_code}: {err_text.decode('utf-8')}")
-                            return
+                            raise RuntimeError(f"Codex API Error {response.status_code}: {err_text.decode('utf-8')}")
                             
                        # Parse SSE lines and yield events
                        async for line in response.aiter_lines():
@@ -117,7 +115,7 @@ class OpenAICodexProvider:
                   yield event
 
         except Exception as e:
-            yield ErrorEvent(error=str(e))
+            raise RuntimeError(str(e))
             
     async def _fetch_events(self, url: str, body: Dict, headers: Dict) -> AsyncIterator[Dict]:
          async with httpx.AsyncClient(timeout=120.0) as client:

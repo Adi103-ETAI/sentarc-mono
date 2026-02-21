@@ -100,13 +100,11 @@ class GoogleProvider:
     ) -> AsyncIterator[StreamEvent]:
         """Stream from Google Gemini API."""
         if not genai:
-            yield ErrorEvent(error="google-generativeai package not found. Install it with pip.")
-            return
+            raise RuntimeError("google-generativeai package not found. Install it with pip.")
 
         api_key = get_env_api_key(model.provider)
         if not api_key:
-            yield ErrorEvent(error=f"No API key found for {model.provider}")
-            return
+            raise RuntimeError(f"No API key found for {model.provider}")
 
         genai.configure(api_key=api_key)
         
@@ -171,7 +169,4 @@ class GoogleProvider:
                yield StopEvent(stop_reason="end_turn", usage=TokenUsage())
 
         except Exception as e:
-            yield ErrorEvent(error=str(e))
-
-
-
+            raise RuntimeError(str(e))
