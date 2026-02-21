@@ -46,11 +46,13 @@ except ImportError:
     pass # dependent on google-cloud-aiplatform
 
 from .utils.validation import validate_tool_call
+from .stream import stream_simple, complete_simple, stream, complete
 
 __all__ = [
     "Role", "Message", "TextContent", "ToolUseContent", "ToolResultContent",
     "Context", "ModelDef", "TokenUsage", "StreamEvent", "Api",
     "get_model", "MODELS",
+    "stream", "complete", "stream_simple", "complete_simple",
     "register_api_provider", "get_api_provider",
     "validate_tool_call"
 ]

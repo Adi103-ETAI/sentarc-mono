@@ -17,6 +17,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Complete Event Reference](#complete-event-reference)
 - [Image Input](#image-input)
 - [Thinking/Reasoning](#thinkingreasoning)
+  - [Unified Interface](#unified-interface-stream_simplecomplete_simple)
   - [Provider-Specific Options (stream/complete)](#provider-specific-options-streamcomplete)
   - [Streaming Thinking Content](#streaming-thinking-content)
 - [Stop Reasons](#stop-reasons)
@@ -245,6 +246,24 @@ context.messages.append(Message(
 ## Thinking/Reasoning
 
 Many models support thinking/reasoning capabilities (Claude Sonnet 3.7+, OpenAI o1/o3, DeepSeek R1). 
+
+### Unified Interface (stream_simple/complete_simple)
+
+```python
+from sentarc_ai import resolve_model, stream_simple, complete_simple
+
+# Many models across providers support thinking/reasoning natively
+model = resolve_model("anthropic", "claude-3-7-sonnet-20250219")
+# or resolve_model("openai", "o3-mini")
+
+# Use the simplified reasoning wrapper without needing provider-specific configurations
+response_text, tool_calls = await complete_simple(model, context, reasoning="medium")
+
+# For streaming with simple wrappers:
+async for event in stream_simple(model, context, reasoning="high"):
+    if event.type == "thinking_delta":
+        print(event.thinking, end="")
+```
 
 ### Provider-Specific Options (stream/complete)
 

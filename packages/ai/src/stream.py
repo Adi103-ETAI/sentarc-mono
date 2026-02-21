@@ -6,72 +6,103 @@ Usage:
         ...
 """
 from __future__ import annotations
-import os
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional, Tuple, Literal
 
-from .types import Context, ModelDef, StreamEvent
-from .models import resolve_model
-
-
-def _build_anthropic_client(model: ModelDef):
-    import anthropic
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    return anthropic.AsyncAnthropic(api_key=api_key)
-
-
-def _build_openai_client(model: ModelDef):
-    import openai
-    if model.provider == "ollama":
-        return openai.AsyncOpenAI(
-            api_key="ollama",
-            base_url=model.base_url or "http://localhost:11434/v1",
-        )
-    return openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-
+from .types import Context, ModelDef, StreamEvent, StreamOptions, ReasoningEffort, ErrorEvent
+from .registry import get_api_provider
 
 async def stream(
-    model:    ModelDef,
-    context:  Context,
-    thinking: bool = False,
+    model: ModelDef,
+    context: Context,
+    options: Optional[StreamOptions] = None,
 ) -> AsyncIterator[StreamEvent]:
     """
     Unified streaming interface across all providers.
     Yields StreamEvent objects normalised to a common format.
     """
-    if model.api == "anthropic":
-        from .providers.anthropic import stream as _stream
-        client = _build_anthropic_client(model)
-        async for event in _stream(client, model, context, thinking=thinking):
-            yield event
-
-    elif model.api == "openai":
-        from .providers.openai import stream as _stream
-        client = _build_openai_client(model)
-        async for event in _stream(client, model, context):
-            yield event
-
-    else:
-        from .types import ErrorEvent
+    provider = get_api_provider(model.api)
+    if not provider:
         yield ErrorEvent(error=f"No provider implementation for api={model.api!r}")
+        return
+        
+    async for event in provider.stream(model, context, options):
+        yield event
 
 
 async def complete(
-    model:   ModelDef,
+    model: ModelDef,
     context: Context,
+    options: Optional[StreamOptions] = None,
 ) -> tuple[str, list]:
     """
     Non-streaming helper. Returns (text, tool_calls).
     Useful for simple one-shot calls.
     """
-    from .types import TextDeltaEvent, ToolCallEndEvent
+    from .types import TextEndEvent, ToolUseEndEvent
 
-    text_parts = []
+    final_text = ""
     tool_calls = []
 
-    async for event in stream(model, context):
-        if isinstance(event, TextDeltaEvent):
-            text_parts.append(event.text)
-        elif isinstance(event, ToolCallEndEvent):
-            tool_calls.append(event.tool_call)
+    async for event in stream(model, context, options):
+        if isinstance(event, TextEndEvent):
+            final_text = event.text
+        elif isinstance(event, ToolUseEndEvent):
+            tool_calls.append(event.tool_use)
 
-    return "".join(text_parts), tool_calls
+    return final_text, tool_calls
+
+
+async def stream_simple(
+    model: ModelDef,
+    context: Context,
+    reasoning: Literal["none", "low", "medium", "high", "xhigh"] = "none",
+) -> AsyncIterator[StreamEvent]:
+    """
+    Unified Interface for reasoning models. Maps a simple reasoning effort string
+    to the appropriate StreamOptions structure to seamlessly support thinking
+    across different API providers (Anthropic, OpenAI, etc).
+    """
+    effort = ReasoningEffort(reasoning) if reasoning != "none" else ReasoningEffort.NONE
+    
+    # Map simple unified intent into provider-agnostic StreamOptions wrapper
+    options = StreamOptions(
+        reasoning_effort=effort,
+        thinking_enabled=(effort != ReasoningEffort.NONE),
+        thinking_budget=10_000 if effort != ReasoningEffort.NONE else 0
+    )
+    
+    provider = get_api_provider(model.api)
+    if not provider:
+        yield ErrorEvent(error=f"No provider implementation for api={model.api!r}")
+        return
+        
+    # Allow providers to have explicit simple streaming handlers if configured, 
+    # otherwise fallback to generic stream wrapper with injected options
+    if hasattr(provider, "stream_simple") and provider.stream_simple != provider.stream:
+        async for event in provider.stream_simple(model, context, options):
+            yield event
+    else:
+        async for event in provider.stream(model, context, options):
+            yield event
+
+
+async def complete_simple(
+    model: ModelDef,
+    context: Context,
+    reasoning: Literal["none", "low", "medium", "high", "xhigh"] = "none",
+) -> tuple[str, list]:
+    """
+    Non-streaming helper for unified reasoning. Returns (text, tool_calls).
+    """
+    from .types import TextEndEvent, ToolUseEndEvent
+
+    final_text = ""
+    tool_calls = []
+
+    async for event in stream_simple(model, context, reasoning):
+        if isinstance(event, TextEndEvent):
+            final_text = event.text
+        elif isinstance(event, ToolUseEndEvent):
+            tool_calls.append(event.tool_use)
+
+    return final_text, tool_calls
