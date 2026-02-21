@@ -1,72 +1,53 @@
 """
-sentarc_ai — Unified LLM client and types.
-Python port of @sentarc-labs/sentarc-ai from sentarc-mono.
-
-Public API (mirrors packages/ai/src/index.ts exports):
-
-    from sentarc_ai import stream, complete, get_model, resolve_model
-    from sentarc_ai.types import Message, Role, Tool, Context, TokenUsage
-    from sentarc_ai.models import register_model, list_models
+sentarc-ai: Unified LLM client and types.
 """
+from .models import get_model, list_models 
+# Ensure models are loaded
+MODELS = list_models()
 
 from .types import (
-    Role,
-    Message,
-    Tool,
-    Context,
-    TextContent,
-    ToolCallContent,
-    ToolResultContent,
-    TextDeltaEvent,
-    ThinkingDeltaEvent,
-    ToolCallStartEvent,
-    ToolCallDeltaEvent,
-    ToolCallEndEvent,
-    MessageStartEvent,
-    MessageEndEvent,
-    ErrorEvent,
-    StreamEvent,
-    TokenUsage,
-    ModelDef,
+    Role, Message, TextContent, ToolUseContent, ToolResultContent, 
+    Context, ModelDef, TokenUsage, StreamEvent, Api
 )
+from .registry import register_api_provider, get_api_provider, ApiProvider
+from .providers import anthropic, openai, google
 
-from .models import (
-    get_model,
-    resolve_model,
-    register_model,
-    list_models,
-    PROVIDER_DEFAULTS,
-)
+# Register built-in providers
+# The following lines are replaced by dedicated provider classes
+# register_api_provider(ApiProvider(api="anthropic", stream=anthropic.stream))
+# register_api_provider(ApiProvider(api="openai", stream=openai.stream))
+# register_api_provider(ApiProvider(api="google", stream=google.stream))
 
-from .stream import stream, complete
+# Register dedicated provider classes
+from .providers.anthropic import AnthropicProvider
+from .providers.openai_completions import OpenAIProvider
+from .providers.openai_responses import OpenAIResponsesProvider
+from .providers.openai_codex import OpenAICodexProvider
+from .providers.gemini_cli import GeminiCliProvider
+from .providers.google import GoogleProvider
+
+register_api_provider(AnthropicProvider())
+register_api_provider(OpenAIProvider())
+register_api_provider(OpenAIResponsesProvider())
+register_api_provider(OpenAICodexProvider())
+register_api_provider(GeminiCliProvider())
+register_api_provider(GoogleProvider())
+
+try:
+    from .providers.amazon_bedrock import BedrockProvider
+    register_api_provider(BedrockProvider())
+except ImportError:
+    pass # dependent on boto3
+
+try:
+    from .providers.google_vertex import GoogleVertexProvider
+    register_api_provider(GoogleVertexProvider())
+except ImportError:
+    pass # dependent on google-cloud-aiplatform
 
 __all__ = [
-    # Types
-    "Role",
-    "Message",
-    "Tool",
-    "Context",
-    "TextContent",
-    "ToolCallContent",
-    "ToolResultContent",
-    "TextDeltaEvent",
-    "ThinkingDeltaEvent",
-    "ToolCallStartEvent",
-    "ToolCallDeltaEvent",
-    "ToolCallEndEvent",
-    "MessageStartEvent",
-    "MessageEndEvent",
-    "ErrorEvent",
-    "StreamEvent",
-    "TokenUsage",
-    "ModelDef",
-    # Model registry
-    "get_model",
-    "resolve_model",
-    "register_model",
-    "list_models",
-    "PROVIDER_DEFAULTS",
-    # Streaming
-    "stream",
-    "complete",
+    "Role", "Message", "TextContent", "ToolUseContent", "ToolResultContent",
+    "Context", "ModelDef", "TokenUsage", "StreamEvent", "Api",
+    "get_model", "MODELS",
+    "register_api_provider", "get_api_provider"
 ]

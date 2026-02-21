@@ -18,6 +18,8 @@ from sentarc_ai import (
     Message, Role, Context, Tool,
     ToolCallContent, ToolResultContent,
     TextDeltaEvent, ToolCallEndEvent, MessageEndEvent,
+    # New events
+    ToolUseEndEvent, StopEvent,
     TokenUsage, ModelDef, StreamEvent,
 )
 
@@ -167,12 +169,28 @@ class AgentSession:
                 if isinstance(event, TextDeltaEvent):
                     text_parts.append(event.text)
 
-                elif isinstance(event, ToolCallEndEvent):
-                    blocked = await self.events.emit("tool_call", event.tool_call)
-                    if not blocked:
-                        pending_tcs.append(event.tool_call)
+                elif isinstance(event, (ToolCallEndEvent, ToolUseEndEvent)):
+                    # Handle both legacy ToolCall and new ToolUse events
+                    tool_content = event.tool_call if isinstance(event, ToolCallEndEvent) else event.tool_use
+                    
+                    # Normalize if needed (ToolUseContent is compatible with ToolCallContent for execution purposes
+                    # except for the 'type' field literal, but we can treat them duck-typed)
+                    
+                    # We might need to convert ToolUseContent to ToolCallContent if strict typing elsewhere expects it,
+                    # or just append. Let's convert to ToolCallContent just in case to maintain internal consistency.
+                    from sentarc_ai import ToolCallContent
+                    if hasattr(tool_content, 'type') and tool_content.type == 'tool_use':
+                        tool_content = ToolCallContent(
+                            id=tool_content.id,
+                            name=tool_content.name,
+                            arguments=tool_content.arguments
+                        )
 
-                elif isinstance(event, MessageEndEvent):
+                    blocked = await self.events.emit("tool_call", tool_content)
+                    if not blocked:
+                        pending_tcs.append(tool_content)
+
+                elif isinstance(event, (MessageEndEvent, StopEvent)):
                     self.total_usage = self.total_usage + event.usage
                     await self.events.emit("message_end", event.usage)
 

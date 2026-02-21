@@ -1,6 +1,5 @@
 """
-OpenAI provider.
-Python port of packages/ai/src/providers/openai-completions.ts and openai-responses.ts from sentarc-mono.
+OpenAI provider (Standard Completions).
 Combines standard and reasoning model support.
 """
 from __future__ import annotations
@@ -18,11 +17,9 @@ from ..types import (
     StartEvent, TextStartEvent, TextDeltaEvent, TextEndEvent,
     ThinkingStartEvent, ThinkingDeltaEvent, ThinkingEndEvent,
     ToolUseStartEvent, ToolUseDeltaEvent, ToolUseEndEvent,
-    StopEvent, ErrorEvent, ToolUseContent,
+    StopEvent, ErrorEvent, ToolUseContent, ToolResultContent
 )
 from ..env import get_env_api_key
-# ... (imports)
-
 from ..transform_messages import to_openai_messages, transform_messages
 
 
@@ -34,11 +31,11 @@ class OpenAIProvider:
         self,
         model: "ModelDef",
         context: "Context",
-        options: Optional[StreamOptions] = None, # Updated signature to match others
+        options: Optional[Any] = None, 
     ) -> AsyncIterator[StreamEvent]:
         """Stream from OpenAI API."""
         
-        reasoning = options.reasoning_effort if options else ReasoningEffort.NONE
+        reasoning = options.getattr("reasoning_effort", ReasoningEffort.NONE) if options else ReasoningEffort.NONE
         
         api_key = get_env_api_key(model.provider)
         if not api_key:
@@ -86,7 +83,7 @@ class OpenAIProvider:
             stream_resp = await client.chat.completions.create(**params)
             
             text_started = False
-            current_tool_call = None
+            current_tool_call = {}
             
             async for chunk in stream_resp:
                 if not chunk.choices: continue
@@ -101,6 +98,7 @@ class OpenAIProvider:
                     yield TextDeltaEvent(text=delta.content)
                 
                 # Reasoning Content
+                # OpenAI python SDK usage for reasoning_content likely needs checking if typed
                 if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                     yield ThinkingDeltaEvent(thinking=delta.reasoning_content)
                     
@@ -108,18 +106,18 @@ class OpenAIProvider:
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
                         if tc.id:
-                            current_tool_call = {
-                                "index": tc.index, 
-                                "id": tc.id, 
-                                "name": tc.function.name, 
+                            # New tool call
+                            current_tool_call[tc.index] = {
+                                "id": tc.id,
+                                "name": tc.function.name if tc.function else "",
                                 "args": ""
                             }
-                            yield ToolUseStartEvent(id=tc.id, name=tc.function.name)
+                            yield ToolUseStartEvent(id=tc.id, name=tc.function.name or "")
                         
                         if tc.function and tc.function.arguments:
-                            if current_tool_call and current_tool_call["index"] == tc.index:
-                                current_tool_call["args"] += tc.function.arguments
-                                yield ToolUseDeltaEvent(id=current_tool_call["id"], partial_input=tc.function.arguments)
+                            if tc.index in current_tool_call:
+                                current_tool_call[tc.index]["args"] += tc.function.arguments
+                                yield ToolUseDeltaEvent(id=current_tool_call[tc.index]["id"], partial_input=tc.function.arguments)
 
                 if chunk.usage:
                     u = chunk.usage
@@ -131,16 +129,17 @@ class OpenAIProvider:
                     yield StopEvent(stop_reason="end_turn", usage=usage)
                     return
 
-            if current_tool_call:
+            # Flush tools
+            for index, call in current_tool_call.items():
                 try:
-                    args = json.loads(current_tool_call["args"])
-                    yield ToolUseEndEvent(tool_use=ToolCallContent( # Using ToolCallContent from types
-                         id=current_tool_call["id"],
-                         name=current_tool_call["name"],
+                    args = json.loads(call["args"])
+                    yield ToolUseEndEvent(tool_use=ToolUseContent( 
+                         id=call["id"],
+                         name=call["name"],
                          arguments=args
                     ))
                 except json.JSONDecodeError:
-                    yield ErrorEvent(error="Failed to parse tool arguments")
+                    yield ErrorEvent(error=f"Failed to parse tool arguments for call {call['id']}")
             
             if text_started:
                 yield TextEndEvent(text="")
@@ -149,6 +148,3 @@ class OpenAIProvider:
             
         except Exception as e:
             yield ErrorEvent(error=str(e))
-
-
-

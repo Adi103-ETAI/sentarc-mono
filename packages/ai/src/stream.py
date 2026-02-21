@@ -1,6 +1,5 @@
 """
 Unified streaming entry point.
-Python port of packages/ai/src/stream.ts from sentarc-mono.
 
 Usage:
     async for event in stream(model, context):
