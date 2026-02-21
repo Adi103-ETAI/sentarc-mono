@@ -8,10 +8,10 @@ from typing import Optional, Callable, Any
 from dataclasses import replace
 from .types import (
     Message, Role, TextContent, ImageContent, ToolCallContent, 
-    ToolResultContent, ThinkingContent, ToolUseContent,
     AssistantMessage, ToolResultMessage, ModelDef, ContentBlock,
-    TokenUsage
+    TokenUsage, ThinkingContent, ToolUseContent
 )
+from .utils.sanitize_unicode import sanitize_surrogates
 
 def transform_messages(
     messages: list[Message],
@@ -36,9 +36,23 @@ def transform_messages(
     transformed: list[Message] = []
     
     for msg in messages:
-        # User messages pass through
+        # Sanitize system prompts or generic string content
+        if msg.role in (Role.USER, Role.SYSTEM) and isinstance(msg.content, str):
+            transformed.append(replace(msg, content=sanitize_surrogates(msg.content)))
+            continue
+            
+        # User messages with blocks
         if msg.role == Role.USER:
-            transformed.append(msg)
+            if isinstance(msg.content, list):
+                new_blocks = []
+                for block in msg.content:
+                    if isinstance(block, TextContent):
+                        new_blocks.append(replace(block, text=sanitize_surrogates(block.text)))
+                    else:
+                        new_blocks.append(block)
+                transformed.append(replace(msg, content=new_blocks))
+            else:
+                 transformed.append(msg)
             continue
             
         # Tool results - check if ID needs remapping
@@ -96,25 +110,26 @@ def transform_messages(
             
             for block in blocks:
                 if isinstance(block, ThinkingContent):
+                    # Sanitize thinking block strings
+                    sanitized_thinking = sanitize_surrogates(block.thinking)
                     # Same model: keep thinking (with signature)
                     if is_same_model and block.signature:
-                        new_content.append(block)
+                        new_content.append(replace(block, thinking=sanitized_thinking))
                         continue
                         
-                    # Skip empty thinking or different model if empty
-                    if not block.thinking or not block.thinking.strip():
+                    if not sanitized_thinking or not sanitized_thinking.strip():
                          if is_same_model and block.signature: # Encrypted reasoning
-                             new_content.append(block)
+                             new_content.append(replace(block, thinking=sanitized_thinking))
                          continue
                         
                     if is_same_model:
-                        new_content.append(block)
+                        new_content.append(replace(block, thinking=sanitized_thinking))
                     else:
                         # Convert to text if different model
-                        new_content.append(TextContent(text=block.thinking))
+                        new_content.append(TextContent(text=sanitized_thinking))
                         
                 elif isinstance(block, TextContent):
-                    new_content.append(block)
+                    new_content.append(replace(block, text=sanitize_surrogates(block.text)))
                     
                 elif isinstance(block, (ToolCallContent, ToolUseContent)):
                     # Normalize tool call
@@ -157,8 +172,11 @@ def transform_messages(
             transformed.append(new_msg)
             continue
             
-        # Fallback for SYSTEM or other
-        transformed.append(msg)
+        # Fallback for SYSTEM or other containing str
+        if isinstance(msg.content, str):
+            transformed.append(replace(msg, content=sanitize_surrogates(msg.content)))
+        else:
+            transformed.append(msg)
         
         
     # -------------------------------------------------------
