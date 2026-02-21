@@ -45,9 +45,12 @@ try:
 except ImportError:
     pass # dependent on google-cloud-aiplatform
 
+from .utils.validation import validate_tool_call
+
 __all__ = [
     "Role", "Message", "TextContent", "ToolUseContent", "ToolResultContent",
     "Context", "ModelDef", "TokenUsage", "StreamEvent", "Api",
     "get_model", "MODELS",
-    "register_api_provider", "get_api_provider"
+    "register_api_provider", "get_api_provider",
+    "validate_tool_call"
 ]

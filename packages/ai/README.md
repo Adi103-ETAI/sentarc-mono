@@ -13,6 +13,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Defining Tools](#defining-tools)
   - [Handling Tool Calls](#handling-tool-calls)
   - [Streaming Tool Calls with Partial JSON](#streaming-tool-calls-with-partial-json)
+  - [Validating Tool Arguments](#validating-tool-arguments)
   - [Complete Event Reference](#complete-event-reference)
 - [Image Input](#image-input)
 - [Thinking/Reasoning](#thinkingreasoning)
@@ -168,6 +169,40 @@ During streaming, tool call arguments are progressively streamed back to you. Th
 
 *(Unlike the TS version, the Python port handles `tool_use_delta` strictly as a string chunk. Parsing partial JSON for UI updates must be done application-side using libraries like `partial-json`.)*
 
+### Validating Tool Arguments
+
+The library includes a utility `validate_tool_call` to automatically validate generated tool arguments against your tool's JSON schema using `jsonschema`.
+
+If validation fails, the error can be returned directly to the model as a tool result, allowing it to retry execution.
+
+```python
+from sentarc_ai import stream, validate_tool_call
+from jsonschema import ValidationError
+
+async for event in stream(model, context):
+    if event.type == "tool_use_end":
+        try:
+            # Validates against the tool's JSON schema
+            validated_args = validate_tool_call(tools, event.tool_use)
+            
+            # Execute your tool logic here
+            result = my_tool_logic(validated_args)
+            
+            context.messages.append(ToolResultMessage(
+                tool_call_id=event.tool_use.id,
+                content=[TextContent(text=str(result))],
+                is_error=False
+            ))
+            
+        except ValidationError as e:
+            # Validation failed - return the schema error to the model
+            context.messages.append(ToolResultMessage(
+                tool_call_id=event.tool_use.id,
+                content=[TextContent(text=str(e))],
+                is_error=True
+            ))
+```
+
 ### Complete Event Reference
 
 All streaming events emitted during assistant message generation (inherited from `types.StreamEvent`):
@@ -175,17 +210,17 @@ All streaming events emitted during assistant message generation (inherited from
 | Event Type | Description | Key Properties |
 |------------|-------------|----------------|
 | `start` | Stream begins | `model`: Current model ID |
-| `text_start` | Text block starts | - |
-| `text_delta` | Text chunk received | `text`: New text chunk |
-| `text_end` | Text block complete | `text`: Final full text |
-| `thinking_start` | Thinking block starts | - |
-| `thinking_delta` | Thinking chunk received | `thinking`: New thinking chunk |
-| `thinking_end` | Thinking block complete | `thinking`: Final full thinking string |
-| `tool_use_start` | Tool call begins | `id`, `name`: Tool identifier and name |
-| `tool_use_delta` | Tool arguments streaming | `id`, `partial_input`: JSON string chunk |
-| `tool_use_end` | Tool call complete | `tool_use`: Parsed `ToolUseContent` object |
-| `stop` | Stream complete | `stop_reason` ("stop", "length", "tool_use"), `usage` |
-| `error` | Error occurred | `error`: String describing the error |
+| `text_start` | Text block starts | Emitted before text chunks begin |
+| `text_delta` | Text chunk received | `text`: New text chunk delta |
+| `text_end` | Text block complete | `text`: Final full accumulated text |
+| `thinking_start` | Thinking block starts | Emitted before reasoning chunks begin |
+| `thinking_delta` | Thinking chunk received | `thinking`: New thinking chunk delta |
+| `thinking_end` | Thinking block complete | `thinking`: Final full accumulated thinking string |
+| `tool_use_start` | Tool call begins | `id`: Tool identifier, `name`: Function name being called |
+| `tool_use_delta` | Tool arguments streaming | `id`: Tool identifier, `partial_input`: JSON string chunk |
+| `tool_use_end` | Tool call complete | `tool_use`: Complete parsed `ToolUseContent` object with `id`, `name`, `arguments` |
+| `stop` | Stream complete | `stop_reason`: Stop reason ("stop", "length", "tool_use", "content_filter"), `usage`: `TokenUsage` object |
+| `error` | Error occurred | `error`: String describing the error type and message |
 
 ## Image Input
 
