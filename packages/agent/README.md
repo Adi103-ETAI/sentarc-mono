@@ -305,6 +305,7 @@ Interrupt the agent while tools are running (`steer()`), or queue messages to re
 
 ```python
 agent.set_steering_mode("one-at-a-time")
+agent.set_follow_up_mode("one-at-a-time")
 
 # While agent is running tools:
 agent.steer({
@@ -313,14 +314,54 @@ agent.steer({
   "timestamp": int(time.time() * 1000)
 })
 
-# Or follow up cleanly:
+# Or follow up cleanly after the agent finishes its current work:
 agent.follow_up({
   "role": "user",
   "content": "Also summarize the result.",
   "timestamp": int(time.time() * 1000)
 })
 
+agent.clear_steering_queue()
+agent.clear_follow_up_queue()
 agent.clear_all_queues()
+```
+
+Use `clear_steering_queue`, `clear_follow_up_queue`, or `clear_all_queues` to drop queued messages dynamically.
+
+When steering messages are detected after a tool completes:
+1. Remaining tools are skipped with error results
+2. Steering messages are injected
+3. LLM responds to the interruption
+
+Follow-up messages are checked only when there are no more tool calls and no steering messages. If any are queued, they are injected and another turn runs.
+
+## Custom Message Types
+
+Unlike TypeScript's rigid declaration merging, Python naturally allows rich `Dict[str, Any]` inheritance under the `AgentMessage` union!
+
+You can define custom message schemas:
+
+```python
+# Valid custom AgentMessage (since the typing union supports 'User', 'Assistant', 'Tool', and 'Any dict')
+notification_msg = {
+    "role": "notification",
+    "text": "File updated successfully", 
+    "timestamp": int(time.time() * 1000)
+}
+```
+
+Then, you only need to ensure they are filtered out in your `convert_to_llm` middleware function before the actual provider call:
+
+```python
+def my_custom_converter(messages):
+    llm_messages = []
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "notification":
+            continue # Filter out custom UI roles
+        llm_messages.append(msg)
+    return llm_messages
+
+agent = Agent(AgentOptions(convert_to_llm=my_custom_converter))
 ```
 
 ## Low-Level API
@@ -339,3 +380,4 @@ async for event in agent_loop(messages, context, config):
 
 ## License
 MIT
+
