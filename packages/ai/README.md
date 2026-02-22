@@ -254,23 +254,26 @@ Many models support thinking/reasoning capabilities (Claude Sonnet 3.7+, OpenAI 
 
 ```python
 from sentarc_ai import resolve_model, stream_simple, complete_simple
+from sentarc_ai.types import StreamOptions, ReasoningEffort
 
 # Many models across providers support thinking/reasoning natively
 model = resolve_model("anthropic", "claude-3-7-sonnet-20250219")
 # or resolve_model("openai", "o3-mini")
 
 # Use the simplified reasoning wrapper without needing provider-specific configurations
-response_text, tool_calls = await complete_simple(model, context, reasoning="medium")
+options = StreamOptions(reasoning_effort=ReasoningEffort.MEDIUM)
+response_text, tool_calls = await complete_simple(model, context, options=options)
 
 # For streaming with simple wrappers:
-async for event in stream_simple(model, context, reasoning="high"):
+stream_options = StreamOptions(reasoning_effort=ReasoningEffort.HIGH)
+async for event in stream_simple(model, context, options=stream_options):
     if event.type == "thinking_delta":
         print(event.thinking, end="")
 ```
 
 ### Provider-Specific Options (stream/complete)
 
-You can pass `thinking=True` to the global `stream` function, or control reasoning effort natively using the `StreamOptions` class.
+You can pass a unified `StreamOptions` object to the global `stream` or `complete` functions to control reasoning effort natively.
 
 ```python
 from sentarc_ai.types import StreamOptions, ReasoningEffort
@@ -290,7 +293,7 @@ options = StreamOptions(
 ### Streaming Thinking Content
 
 ```python
-async for event in stream(model, context, thinking=True):
+async for event in stream(model, context, options=options):
     if event.type == 'thinking_start':
         print('[Model started thinking]')
     elif event.type == 'thinking_delta':
