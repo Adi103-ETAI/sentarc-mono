@@ -168,7 +168,14 @@ agent = Agent(AgentOptions(
     session_id="session-123",
 
     # Dynamic API key resolution (for expiring tokens)
-    get_api_key=async lambda provider: refresh_token(),
+    get_api_key=get_api_key_async,
+    
+    # Optional map of token budgets per thinking level
+    thinking_budgets={
+        "low": 1024,
+        "medium": 2048,
+        "high": 4096
+    }
 ))
 ```
 
@@ -227,6 +234,19 @@ agent.replace_messages(new_messages)
 agent.append_message(message)
 agent.clear_messages()
 agent.reset()  # Clear everything
+```
+
+### Session and Thinking Budgets
+
+```python
+agent.session_id = "session-123"
+
+agent.thinking_budgets = {
+    "minimal": 128,
+    "low": 512,
+    "medium": 1024,
+    "high": 2048
+}
 ```
 
 ### Control

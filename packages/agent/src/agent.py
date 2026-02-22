@@ -64,6 +64,7 @@ class Agent:
         self.follow_up_mode = options.follow_up_mode or "one-at-a-time"
         self.stream_fn = options.stream_fn or stream_simple
         self._session_id = options.session_id
+        self._thinking_budgets = options.thinking_budgets
         self.get_api_key = options.get_api_key
         
         self.listeners: Set[Callable[[AgentEvent], None]] = set()
@@ -80,6 +81,14 @@ class Agent:
     @session_id.setter
     def session_id(self, value: Optional[str]):
         self._session_id = value
+
+    @property
+    def thinking_budgets(self) -> Optional[Dict[str, int]]:
+        return self._thinking_budgets
+
+    @thinking_budgets.setter
+    def thinking_budgets(self, value: Optional[Dict[str, int]]):
+        self._thinking_budgets = value
 
     @property
     def state(self) -> AgentState:
@@ -267,7 +276,8 @@ class Agent:
             transform_context=self.transform_context,
             get_api_key=self.get_api_key,
             get_steering_messages=get_steering_messages,
-            get_follow_up_messages=get_follow_up_messages
+            get_follow_up_messages=get_follow_up_messages,
+            thinking_budgets=self._thinking_budgets
         )
 
         partial = None
