@@ -162,21 +162,13 @@ async def complete(
 async def stream_simple(
     model: ModelDef,
     context: Context,
-    reasoning: Literal["none", "low", "medium", "high", "xhigh"] = "none",
+    options: Optional[StreamOptions] = None,
 ) -> AsyncIterator[StreamEvent]:
     """
-    Unified Interface for reasoning models. Maps a simple reasoning effort string
-    to the appropriate StreamOptions structure to seamlessly support thinking
-    across different API providers (Anthropic, OpenAI, etc).
+    Unified Interface for reasoning models and standard streams.
     """
-    effort = ReasoningEffort(reasoning) if reasoning != "none" else ReasoningEffort.NONE
-    
-    # Map simple unified intent into provider-agnostic StreamOptions wrapper
-    options = StreamOptions(
-        reasoning_effort=effort,
-        thinking_enabled=(effort != ReasoningEffort.NONE),
-        thinking_budget=10_000 if effort != ReasoningEffort.NONE else 0
-    )
+    options = options or StreamOptions()
+
     
     provider = get_api_provider(model.api)
     if not provider:
@@ -198,7 +190,7 @@ async def stream_simple(
 async def complete_simple(
     model: ModelDef,
     context: Context,
-    reasoning: Literal["none", "low", "medium", "high", "xhigh"] = "none",
+    options: Optional[StreamOptions] = None,
 ) -> AssistantMessage:
     """
     Non-streaming helper for unified reasoning. Returns final AssistantMessage.
@@ -210,7 +202,7 @@ async def complete_simple(
     stop_reason = "stop"
     error_message = None
 
-    async for event in stream_simple(model, context, reasoning):
+    async for event in stream_simple(model, context, options):
         if event.type == "text_end":
             blocks.append(TextContent(text=event.text))
         elif event.type == "thinking_end":

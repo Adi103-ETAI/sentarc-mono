@@ -1,257 +1,336 @@
 """
-Core agent loop.
-Python port of @sentarc-labs/sentarc-agent-core from sentarc-mono.
-
-Responsibilities:
-  - Manage conversation history (messages list)
-  - Drive the tool-call loop (prompt → LLM → tool → repeat)
-  - Fire lifecycle events via the event system
-  - Track token usage across the session
+Stateful Agent class wrapper.
+Manages the agent's internal state, tool bindings, event subscriptions, and queues for steering and follow-ups.
+Provides `prompt()`, `continue_session()`, `steer()`, and `follow_up()` public accessors.
 """
-from __future__ import annotations
+
 import asyncio
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import List, Optional, Callable, Set, Union, Literal, Awaitable
+import time
 
-from sentarc_ai import (
-    stream, complete,
-    resolve_model,
-    Message, Role, Context, Tool,
-    ToolCallContent, ToolResultContent,
-    TextDeltaEvent, ToolCallEndEvent, MessageEndEvent,
-    # New events
-    ToolUseEndEvent, StopEvent,
-    TokenUsage, ModelDef, StreamEvent,
+from sentarc_ai.models import get_model
+from sentarc_ai.stream import stream_simple
+from sentarc_ai.types import (
+    Message,
+    ModelDef,
+    ImageContent,
+    ReasoningEffort
 )
 
+from sentarc_agent.types import (
+    AgentState,
+    AgentOptions,
+    AgentMessage,
+    AgentEvent,
+    AgentTool,
+    AgentContext,
+    AgentLoopConfig,
+    ThinkingLevel,
+    StreamFn
+)
+from sentarc_agent.agent_loop import agent_loop, agent_loop_continue
 
-# ---------------------------------------------------------------------------
-# Simple event bus  (mirrors sentarc-mono's on/emit pattern in AgentSession)
-# ---------------------------------------------------------------------------
-
-LIFECYCLE_EVENTS = [
-    "session_start",
-    "session_end",
-    "turn_start",
-    "turn_end",
-    "tool_call",            # fired before tool executes — handler can block
-    "tool_result",          # fired after tool executes — handler can modify result
-    "context",              # fired before each LLM call — handler can modify context
-    "message_end",          # fired after each LLM response
-]
+def default_convert_to_llm(messages: List[AgentMessage]) -> List[Message]:
+    """Default converter: Keep only LLM-compatible messages."""
+    return [
+        m for m in messages if isinstance(m, dict) and m.get("role") in ["user", "assistant", "toolResult"]
+        or getattr(m, "role", None) in ["user", "assistant", "toolResult"]
+    ] # type: ignore
 
 
-class EventBus:
-    def __init__(self):
-        self._handlers: dict[str, list[Callable]] = {e: [] for e in LIFECYCLE_EVENTS}
+class Agent:
+    def __init__(self, options: Optional[AgentOptions] = None):
+        options = options or AgentOptions()
+        
+        self._state = AgentState(
+            system_prompt="",
+            model=get_model("google", "gemini-2.5-flash-lite-preview-06-17"),
+            thinking_level="off",
+            tools=[],
+            messages=[],
+            is_streaming=False,
+            stream_message=None,
+            pending_tool_calls=set(),
+            error=None
+        )
+        if options.initial_state:
+            for k, v in options.initial_state.items():
+                if hasattr(self._state, k):
+                    setattr(self._state, k, v)
 
-    def on(self, event: str, handler: Callable) -> None:
-        if event not in self._handlers:
-            raise ValueError(f"Unknown event: {event!r}. Valid: {LIFECYCLE_EVENTS}")
-        self._handlers[event].append(handler)
+        self.convert_to_llm = options.convert_to_llm or default_convert_to_llm
+        self.transform_context = options.transform_context
+        self.steering_mode = options.steering_mode or "one-at-a-time"
+        self.follow_up_mode = options.follow_up_mode or "one-at-a-time"
+        self.stream_fn = options.stream_fn or stream_simple
+        self._session_id = options.session_id
+        self.get_api_key = options.get_api_key
+        
+        self.listeners: Set[Callable[[AgentEvent], None]] = set()
+        self.abort_controller: Optional[asyncio.Event] = None
+        
+        self.steering_queue: List[AgentMessage] = []
+        self.follow_up_queue: List[AgentMessage] = []
+        self.running_prompt: Optional[asyncio.Task] = None
 
-    def off(self, event: str, handler: Callable) -> None:
-        self._handlers.get(event, []).remove(handler)
+    @property
+    def session_id(self) -> Optional[str]:
+        return self._session_id
 
-    async def emit(self, event: str, data: Any = None, *extra) -> Any:
-        for h in self._handlers.get(event, []):
+    @session_id.setter
+    def session_id(self, value: Optional[str]):
+        self._session_id = value
+
+    @property
+    def state(self) -> AgentState:
+        return self._state
+
+    def subscribe(self, fn: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        self.listeners.add(fn)
+        def unsubscribe():
+            self.listeners.discard(fn)
+        return unsubscribe
+
+    def set_system_prompt(self, v: str):
+        self._state.system_prompt = v
+
+    def set_model(self, m: ModelDef):
+        self._state.model = m
+
+    def set_thinking_level(self, l: ThinkingLevel):
+        self._state.thinking_level = l
+
+    def set_steering_mode(self, mode: Literal["all", "one-at-a-time"]):
+        self.steering_mode = mode
+
+    def set_follow_up_mode(self, mode: Literal["all", "one-at-a-time"]):
+        self.follow_up_mode = mode
+
+    def set_tools(self, t: List[AgentTool]):
+        self._state.tools = t
+
+    def replace_messages(self, ms: List[AgentMessage]):
+        self._state.messages = list(ms)
+
+    def append_message(self, m: AgentMessage):
+        self._state.messages.append(m)
+
+    def steer(self, m: AgentMessage):
+        """Queue a steering message to interrupt the agent mid-run."""
+        self.steering_queue.append(m)
+
+    def follow_up(self, m: AgentMessage):
+        """Queue a follow-up message to be processed after the agent finishes."""
+        self.follow_up_queue.append(m)
+
+    def clear_steering_queue(self):
+        self.steering_queue.clear()
+
+    def clear_follow_up_queue(self):
+        self.follow_up_queue.clear()
+
+    def clear_all_queues(self):
+        self.steering_queue.clear()
+        self.follow_up_queue.clear()
+
+    def has_queued_messages(self) -> bool:
+        return len(self.steering_queue) > 0 or len(self.follow_up_queue) > 0
+
+    def _dequeue_steering_messages(self) -> List[AgentMessage]:
+        if self.steering_mode == "one-at-a-time":
+            if self.steering_queue:
+                return [self.steering_queue.pop(0)]
+            return []
+        steering = list(self.steering_queue)
+        self.steering_queue.clear()
+        return steering
+
+    def _dequeue_follow_up_messages(self) -> List[AgentMessage]:
+        if self.follow_up_mode == "one-at-a-time":
+            if self.follow_up_queue:
+                return [self.follow_up_queue.pop(0)]
+            return []
+        follow_up = list(self.follow_up_queue)
+        self.follow_up_queue.clear()
+        return follow_up
+
+    def clear_messages(self):
+        self._state.messages.clear()
+
+    def abort(self):
+        if self.abort_controller and not self.abort_controller.is_set():
+            self.abort_controller.set()
+
+    async def wait_for_idle(self):
+        if self.running_prompt and not self.running_prompt.done():
+            await self.running_prompt
+
+    def reset(self):
+        self._state.messages.clear()
+        self._state.is_streaming = False
+        self._state.stream_message = None
+        self._state.pending_tool_calls.clear()
+        self._state.error = None
+        self.clear_all_queues()
+
+    async def prompt(self, input_val: Union[str, AgentMessage, List[AgentMessage]], images: Optional[List[ImageContent]] = None):
+        """Send a prompt with an AgentMessage, text, or multiple messages."""
+        if self._state.is_streaming:
+            raise RuntimeError(
+                "Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion."
+            )
+
+        model = self._state.model
+        if not model:
+            raise ValueError("No model configured")
+
+        msgs: List[AgentMessage]
+
+        if isinstance(input_val, list):
+            msgs = input_val
+        elif isinstance(input_val, str):
+            content: List[Union[TextContent, ImageContent]] = [{"type": "text", "text": input_val}] # type: ignore
+            if images:
+                content.extend(images)
+            msgs = [{
+                "role": "user",
+                "content": content,
+                "timestamp": int(time.time() * 1000)
+            }] # type: ignore
+        else:
+            msgs = [input_val]
+
+        await self._run_loop(msgs)
+
+    async def continue_session(self):
+        """Continue from current context (used for retries and resuming queued messages)."""
+        if self._state.is_streaming:
+            raise RuntimeError("Agent is already processing. Wait for completion before continuing.")
+
+        messages = self._state.messages
+        if not messages:
+            raise ValueError("No messages to continue from")
+            
+        role = messages[-1].get("role") if isinstance(messages[-1], dict) else getattr(messages[-1], "role", None)
+        if role == "assistant":
+            queued_steering = self._dequeue_steering_messages()
+            if queued_steering:
+                await self._run_loop(queued_steering, skip_initial_steering_poll=True)
+                return
+
+            queued_follow_up = self._dequeue_follow_up_messages()
+            if queued_follow_up:
+                await self._run_loop(queued_follow_up)
+                return
+
+            raise ValueError("Cannot continue from message role: assistant")
+
+        await self._run_loop(None)
+
+    async def _run_loop(self, messages: Optional[List[AgentMessage]], skip_initial_steering_poll: bool = False):
+        model = self._state.model
+        if not model:
+            raise ValueError("No model configured")
+
+        self.abort_controller = asyncio.Event()
+        self._state.is_streaming = True
+        self._state.stream_message = None
+        self._state.error = None
+
+        reasoning = None if self._state.thinking_level == "off" else self._state.thinking_level
+
+        context = AgentContext(
+            system_prompt=self._state.system_prompt,
+            messages=list(self._state.messages),
+            tools=self._state.tools
+        )
+
+        async def get_steering_messages() -> List[AgentMessage]:
+            nonlocal skip_initial_steering_poll
+            if skip_initial_steering_poll:
+                skip_initial_steering_poll = False
+                return []
+            return self._dequeue_steering_messages()
+
+        async def get_follow_up_messages() -> List[AgentMessage]:
+            return self._dequeue_follow_up_messages()
+
+        effort = ReasoningEffort(reasoning) if reasoning and reasoning != "none" else ReasoningEffort.NONE
+
+        config = AgentLoopConfig(
+            model=model,
+            reasoning_effort=effort,
+            thinking_enabled=(effort != ReasoningEffort.NONE),
+            thinking_budget=10_000 if effort != ReasoningEffort.NONE else 0,
+            session_id=self._session_id,
+            convert_to_llm=self.convert_to_llm,
+            transform_context=self.transform_context,
+            get_api_key=self.get_api_key,
+            get_steering_messages=get_steering_messages,
+            get_follow_up_messages=get_follow_up_messages
+        )
+
+        partial = None
+        
+        # We track running_prompt internally
+        async def run():
+            nonlocal partial
             try:
-                result = await h(data, *extra) if asyncio.iscoroutinefunction(h) else h(data, *extra)
-                if result is not None:
-                    data = result
-            except Exception as e:
-                print(f"[EventBus error: {event}] {e}")
-        return data
-
-
-# ---------------------------------------------------------------------------
-# Tool registry
-# ---------------------------------------------------------------------------
-
-class ToolRegistry:
-    """Register and execute tools. Mirrors coding-agent's tool system."""
-
-    def __init__(self):
-        self._tools: dict[str, Tool] = {}
-
-    def register(self, tool: Tool) -> None:
-        self._tools[tool.name] = tool
-
-    def remove(self, name: str) -> None:
-        self._tools.pop(name, None)
-
-    def get(self, name: str) -> Optional[Tool]:
-        return self._tools.get(name)
-
-    def all(self) -> list[Tool]:
-        return list(self._tools.values())
-
-    async def execute(self, tool_call: ToolCallContent) -> str:
-        tool = self._tools.get(tool_call.name)
-        if not tool:
-            return f"Error: unknown tool '{tool_call.name}'"
-        if not tool.execute:
-            return f"Error: tool '{tool_call.name}' has no execute function"
-        try:
-            if asyncio.iscoroutinefunction(tool.execute):
-                result = await tool.execute(**tool_call.arguments)
-            else:
-                result = tool.execute(**tool_call.arguments)
-            return str(result)
-        except Exception as e:
-            return f"Tool error [{tool_call.name}]: {type(e).__name__}: {e}"
-
-
-# ---------------------------------------------------------------------------
-# Agent session  (mirrors AgentSession in sentarc-mono)
-# ---------------------------------------------------------------------------
-
-class AgentSession:
-    """
-    Manages a single agent conversation session.
-
-    Usage:
-        session = AgentSession(provider="anthropic")
-        result  = await session.prompt("List the .py files here")
-    """
-
-    def __init__(
-        self,
-        provider:      str            = "anthropic",
-        model_id:      Optional[str]  = None,
-        system_prompt: Optional[str]  = None,
-        max_turns:     int            = 50,
-    ):
-        self.model:        ModelDef     = resolve_model(provider, model_id)
-        self.system_prompt: str         = system_prompt or _DEFAULT_SYSTEM
-        self.max_turns:    int          = max_turns
-        self.messages:     list[Message] = []
-        self.tools:        ToolRegistry = ToolRegistry()
-        self.events:       EventBus     = EventBus()
-        self.total_usage:  TokenUsage   = TokenUsage()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    async def prompt(
-        self,
-        user_message: str,
-        on_event: Optional[Callable[[StreamEvent], None]] = None,
-        thinking: bool = False,
-    ) -> str:
-        """
-        Send a user message, run the agentic loop, return final text.
-        Mirrors AgentSession.prompt() in sentarc-mono.
-        """
-        self.messages.append(Message(role=Role.USER, content=user_message))
-        await self.events.emit("session_start", user_message)
-
-        final_text = ""
-
-        for turn in range(self.max_turns):
-            await self.events.emit("turn_start", turn + 1)
-
-            context = Context(
-                messages=self._build_context_messages(),
-                system_prompt=self.system_prompt,
-                tools=self.tools.all(),
-            )
-            # Allow hooks to modify context before LLM call
-            context = await self.events.emit("context", context) or context
-
-            text_parts: list[str]          = []
-            pending_tcs: list[ToolCallContent] = []
-
-            async for event in stream(self.model, context, thinking=thinking):
-                if on_event:
-                    on_event(event)
-
-                if isinstance(event, TextDeltaEvent):
-                    text_parts.append(event.text)
-
-                elif isinstance(event, (ToolCallEndEvent, ToolUseEndEvent)):
-                    # Handle both legacy ToolCall and new ToolUse events
-                    tool_content = event.tool_call if isinstance(event, ToolCallEndEvent) else event.tool_use
+                stream = agent_loop(messages, context, config, self.stream_fn) if messages else agent_loop_continue(context, config, self.stream_fn)
+                
+                async for event in stream:
+                    # Update internal state based on events
+                    event_type = getattr(event, "type", None)
                     
-                    # Normalize if needed (ToolUseContent is compatible with ToolCallContent for execution purposes
-                    # except for the 'type' field literal, but we can treat them duck-typed)
+                    if event_type == "message_start":
+                        partial = event.message # type: ignore
+                        self._state.stream_message = event.message # type: ignore
+                    elif event_type == "message_update":
+                        partial = event.message # type: ignore
+                        self._state.stream_message = event.message # type: ignore
+                    elif event_type == "message_end":
+                        partial = None
+                        self._state.stream_message = None
+                        self.append_message(event.message) # type: ignore
+                    elif event_type == "tool_execution_start":
+                        self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
+                    elif event_type == "tool_execution_end":
+                        self._state.pending_tool_calls.discard(event.tool_call_id) # type: ignore
+                    elif event_type == "turn_end":
+                        if getattr(event.message, "role", None) == "assistant" and getattr(event.message, "error_message", None): # type: ignore
+                            self._state.error = getattr(event.message, "error_message", None) # type: ignore
+                    elif event_type == "agent_end":
+                        self._state.is_streaming = False
+                        self._state.stream_message = None
                     
-                    # We might need to convert ToolUseContent to ToolCallContent if strict typing elsewhere expects it,
-                    # or just append. Let's convert to ToolCallContent just in case to maintain internal consistency.
-                    from sentarc_ai import ToolCallContent
-                    if hasattr(tool_content, 'type') and tool_content.type == 'tool_use':
-                        tool_content = ToolCallContent(
-                            id=tool_content.id,
-                            name=tool_content.name,
-                            arguments=tool_content.arguments
-                        )
+                    self._emit(event)
+                    
+            except Exception as err:
+                from sentarc_ai.types import AssistantMessage
+                error_msg = AssistantMessage(
+                    role="assistant",
+                    content=[TextContent(type="text", text="")], # type: ignore
+                    api=model.api, # type: ignore
+                    provider=model.provider, # type: ignore
+                    model=model.id, # type: ignore
+                    usage={"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}, # type: ignore
+                    stop_reason="aborted" if self.abort_controller and self.abort_controller.is_set() else "error",
+                    error_message=str(err),
+                    timestamp=int(time.time() * 1000)
+                )
+                self.append_message(error_msg) # type: ignore
+                self._state.error = str(err)
+                from sentarc_agent.types import AgentEndEvent
+                self._emit(AgentEndEvent(messages=[error_msg])) # type: ignore
+            finally:
+                self._state.is_streaming = False
+                self._state.stream_message = None
+                self._state.pending_tool_calls.clear()
+                self.abort_controller = None
 
-                    blocked = await self.events.emit("tool_call", tool_content)
-                    if not blocked:
-                        pending_tcs.append(tool_content)
+        self.running_prompt = asyncio.create_task(run())
+        await self.running_prompt
 
-                elif isinstance(event, (MessageEndEvent, StopEvent)):
-                    self.total_usage = self.total_usage + event.usage
-                    await self.events.emit("message_end", event.usage)
-
-            # Record assistant turn
-            assistant_text = "".join(text_parts)
-            asst_msg = Message(
-                role=Role.ASSISTANT,
-                content=assistant_text,
-                tool_calls=pending_tcs,
-            )
-            self.messages.append(asst_msg)
-
-            # If no tool calls → done
-            if not pending_tcs:
-                final_text = assistant_text
-                break
-
-            # Execute tools and collect results
-            for tc in pending_tcs:
-                raw_result = await self.tools.execute(tc)
-                result     = await self.events.emit("tool_result", raw_result, tc) or raw_result
-                self.messages.append(Message(
-                    role=Role.TOOL,
-                    content=str(result),
-                    tool_call_id=tc.id,
-                ))
-
-            await self.events.emit("turn_end", turn + 1)
-
-        await self.events.emit("session_end", final_text)
-        return final_text
-
-    def set_model(self, provider: str, model_id: Optional[str] = None) -> None:
-        """Switch models mid-session. Mirrors AgentSession.setModel()."""
-        self.model = resolve_model(provider, model_id)
-
-    def clear(self) -> None:
-        """Clear conversation history."""
-        self.messages.clear()
-
-    def usage_summary(self) -> str:
-        return self.total_usage.summary()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _build_context_messages(self) -> list[Message]:
-        """
-        Return messages ready for the LLM.
-        System prompt is passed separately via Context.system_prompt.
-        """
-        return [m for m in self.messages if m.role != Role.SYSTEM]
-
-
-# ---------------------------------------------------------------------------
-# Default system prompt
-# ---------------------------------------------------------------------------
-
-_DEFAULT_SYSTEM = (
-    "You are a helpful AI assistant. "
-    "When tools are available, use them to complete tasks accurately. "
-    "Think step by step before acting."
-)
+    def _emit(self, e: AgentEvent):
+        for listener in self.listeners:
+            listener(e)

@@ -329,6 +329,7 @@ class StreamOptions:
     headers: Optional[dict[str, str]] = None
     cache_retention: Literal["none", "short", "long"] = "short"
     session_id: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 @dataclass
