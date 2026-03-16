@@ -1,8 +1,4 @@
-"""
-OpenAI provider.
-Python port of packages/ai/src/providers/openai-completions.ts and openai-responses.ts from sentarc-mono.
-Combines standard and reasoning model support.
-"""
+"""OpenAI provider — supports both /completions and /responses endpoints."""
 from __future__ import annotations
 import os
 import json

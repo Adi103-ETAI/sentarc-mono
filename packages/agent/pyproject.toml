@@ -1,7 +1,7 @@
 [project]
 name = "sentarc-agent"
 version = "0.1.0"
-description = "Agentic loop and session management — Python port of @sentarc-labs/sentarc-agent-core"
+description = "Stateful agent loop with tool execution and event streaming"
 requires-python = ">=3.11"
 dependencies = [
     "sentarc-ai",

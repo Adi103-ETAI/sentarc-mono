@@ -5,7 +5,7 @@ Provides `prompt()`, `continue_session()`, `steer()`, and `follow_up()` public a
 """
 
 import asyncio
-from typing import List, Optional, Callable, Set, Union, Literal, Awaitable
+from typing import List, Optional, Callable, Set, Union, Literal, Awaitable, Dict
 import time
 
 from sentarc_ai.models import get_model

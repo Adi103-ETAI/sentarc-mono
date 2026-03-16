@@ -1,0 +1,39 @@
+[project]
+name = "sentarc-coding-agent"
+version = "0.1.0"
+description = "Sentarc coding agent CLI (arc command)"
+requires-python = ">=3.11"
+dependencies = [
+    "sentarc-ai",
+    "sentarc-agent",
+    "pathspec>=0.12.0",
+    "python-frontmatter>=1.0.0",
+    "Pillow>=10.0.0",
+    "pyperclip>=1.9.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "pytest-asyncio>=0.21.0"]
+
+[project.scripts]
+arc = "sentarc_coding_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"sentarc_coding_agent" = "src"}
+packages = [
+    "sentarc_coding_agent",
+    "sentarc_coding_agent.cli",
+    "sentarc_coding_agent.core",
+    "sentarc_coding_agent.core.tools",
+    "sentarc_coding_agent.core.compaction",
+    "sentarc_coding_agent.core.extensions",
+    "sentarc_coding_agent.modes",
+    "sentarc_coding_agent.modes.interactive",
+    "sentarc_coding_agent.modes.interactive.components",
+    "sentarc_coding_agent.modes.rpc",
+    "sentarc_coding_agent.utils",
+]
