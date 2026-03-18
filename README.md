@@ -61,24 +61,6 @@ arc
 ./arc-test.sh --no-env        # Run without API keys
 ```
 
-## Project Structure
-
-```
-sentarc-mono/
-├── .arc/                    # Project configuration for the coding agent
-│   ├── extensions/          # Custom slash commands and widgets
-│   ├── prompts/             # Prompt templates
-│   └── skills/              # Custom skills
-├── packages/
-│   ├── ai/                  # sentarc-ai: Unified LLM client
-│   ├── agent/               # sentarc-agent: Agent runtime
-│   ├── tui/                 # sentarc-tui: Terminal UI library
-│   └── coding-agent/        # sentarc-coding-agent: CLI
-├── test.sh                  # Run tests
-├── arc-test.sh              # Run arc from sources
-└── README.md
-```
-
 ## License
 
 MIT
