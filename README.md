@@ -27,6 +27,21 @@ Tools for building AI agents with a unified multi-provider LLM API.
 - **AWS** - Bedrock (Claude, Titan, etc.)
 - **OpenAI-Compatible** - Ollama, vLLM, Mistral, Groq, DeepSeek, and more
 
+## Installation
+
+Install from PyPI:
+
+```bash
+# Install the complete arc coding agent (includes all dependencies)
+pip install sentarc-coding-agent
+arc --help
+
+# Or install individual packages
+pip install sentarc-ai          # LLM client
+pip install sentarc-agent       # Agent runtime
+pip install sentarc-tui         # Terminal UI library
+```
+
 ## Development
 
 ```bash
@@ -50,6 +65,7 @@ arc
 |--------|-------------|
 | `./test.sh` | Run all tests (skips LLM-dependent tests without API keys) |
 | `./arc-test.sh` | Run arc from sources (must be run from repo root) |
+| `./scripts/publish.sh` | Publish all packages to PyPI (interactive) |
 
 ```bash
 # Run tests
@@ -59,6 +75,9 @@ arc
 # Run arc from sources
 ./arc-test.sh                 # Run arc normally
 ./arc-test.sh --no-env        # Run without API keys
+
+# Publish to PyPI (prompts for API token)
+./scripts/publish.sh
 ```
 
 ## License
