@@ -10,6 +10,8 @@ dependencies = [
     "python-frontmatter>=1.0.0",
     "Pillow>=10.0.0",
     "pyperclip>=1.9.0",
+    "pyyaml>=6.0.0",
+    "filetype>=1.2.0",
 ]
 
 [project.optional-dependencies]

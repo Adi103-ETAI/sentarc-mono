@@ -42,12 +42,23 @@ pip install -e packages/coding-agent
 
 # Run the coding agent
 arc
+```
 
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `./test.sh` | Run all tests (skips LLM-dependent tests without API keys) |
+| `./arc-test.sh` | Run arc from sources (must be run from repo root) |
+
+```bash
 # Run tests
-pytest packages/ai/tests/
-pytest packages/agent/tests/
-pytest packages/tui/tests/
-pytest packages/coding-agent/tests/
+./test.sh                     # Run all tests without API keys
+./test.sh -v                  # Verbose output
+
+# Run arc from sources
+./arc-test.sh                 # Run arc normally
+./arc-test.sh --no-env        # Run without API keys
 ```
 
 ## Project Structure
@@ -63,6 +74,8 @@ sentarc-mono/
 │   ├── agent/               # sentarc-agent: Agent runtime
 │   ├── tui/                 # sentarc-tui: Terminal UI library
 │   └── coding-agent/        # sentarc-coding-agent: CLI
+├── test.sh                  # Run tests
+├── arc-test.sh              # Run arc from sources
 └── README.md
 ```
 
