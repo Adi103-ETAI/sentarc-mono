@@ -4,6 +4,8 @@ Arc is a minimal terminal coding agent. Extend it with Python [Extensions](#exte
 
 Arc runs in three modes: interactive, print/JSON for scripting, and RPC for process integration.
 
+See [docs/](docs/) for subsystem guides and [examples/](examples/) for ready-made assets.
+
 ## Table of Contents
 
 - [Installation](#installation)
@@ -217,6 +219,8 @@ Replace the default system prompt with `.arc/SYSTEM.md` (project) or `~/.arc/age
 
 ## Customization
 
+Detailed subsystem guides live under [docs/](docs/) (extensions, skills, sessions, compaction, RPC, etc.), and reusable assets will land in [examples/](examples/) as they are published.
+
 ### Prompt Templates
 
 Reusable prompts as Markdown files. Type `/templatename` to expand.
@@ -299,6 +303,8 @@ Built-in: `dark`, `light`. Custom themes can be placed in `~/.arc/agent/themes/`
 ---
 
 ## Programmatic Usage
+
+Python consumers can call `sentarc_agent.Agent` directly; see `examples/sdk/` for runnable scripts that cover a minimal prompt, tool-enabled runs, and session resume.
 
 ### RPC Mode
 
