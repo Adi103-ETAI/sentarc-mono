@@ -4,6 +4,14 @@ Stateful agent with tool execution and event streaming. Built on `sentarc-ai`.
 
 ## Installation
 
+Install from PyPI:
+
+```bash
+pip install sentarc-agent
+```
+
+Or for development:
+
 ```bash
 pip install -e packages/agent
 ```

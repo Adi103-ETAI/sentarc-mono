@@ -48,6 +48,14 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 
 ## Installation
 
+Install from PyPI:
+
+```bash
+pip install sentarc-ai
+```
+
+Or for development:
+
 ```bash
 pip install -e packages/ai
 ```
