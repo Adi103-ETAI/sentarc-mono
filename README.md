@@ -7,7 +7,7 @@
 
 > **Looking for the arc coding agent?** See **[packages/coding-agent](packages/coding-agent)** for installation and usage.
 
-A Python port of [pi-mono](https://github.com/badlogic/pi-mono) - tools for building AI agents and managing LLM deployments.
+Tools for building AI agents with a unified multi-provider LLM API.
 
 ## Packages
 
