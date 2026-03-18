@@ -1,6 +1,6 @@
 [project]
 name = "sentarc-ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified LLM client and types for Sentarc AI"
 requires-python = ">=3.11"
 dependencies = [
