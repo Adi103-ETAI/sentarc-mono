@@ -70,7 +70,8 @@ class Agent:
         
         self.listeners: Set[Callable[[AgentEvent], None]] = set()
         self.abort_controller: Optional[asyncio.Event] = None
-        
+        self._state_lock = asyncio.Lock()  # Protect concurrent state access
+
         self.steering_queue: List[AgentMessage] = []
         self.follow_up_queue: List[AgentMessage] = []
         self.running_prompt: Optional[asyncio.Task] = None
@@ -243,9 +244,10 @@ class Agent:
             raise ValueError("No model configured")
 
         self.abort_controller = asyncio.Event()
-        self._state.is_streaming = True
-        self._state.stream_message = None
-        self._state.error = None
+        async with self._state_lock:
+            self._state.is_streaming = True
+            self._state.stream_message = None
+            self._state.error = None
 
         reasoning = None if self._state.thinking_level == "off" else self._state.thinking_level
 
@@ -293,27 +295,28 @@ class Agent:
                 async for event in stream:
                     # Update internal state based on events
                     event_type = getattr(event, "type", None)
-                    
-                    if event_type == "message_start":
-                        partial = event.message # type: ignore
-                        self._state.stream_message = event.message # type: ignore
-                    elif event_type == "message_update":
-                        partial = event.message # type: ignore
-                        self._state.stream_message = event.message # type: ignore
-                    elif event_type == "message_end":
-                        partial = None
-                        self._state.stream_message = None
-                        self.append_message(event.message) # type: ignore
-                    elif event_type == "tool_execution_start":
-                        self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
-                    elif event_type == "tool_execution_end":
-                        self._state.pending_tool_calls.discard(event.tool_call_id) # type: ignore
-                    elif event_type == "turn_end":
-                        if getattr(event.message, "role", None) == "assistant" and getattr(event.message, "error_message", None): # type: ignore
-                            self._state.error = getattr(event.message, "error_message", None) # type: ignore
-                    elif event_type == "agent_end":
-                        self._state.is_streaming = False
-                        self._state.stream_message = None
+
+                    async with self._state_lock:
+                        if event_type == "message_start":
+                            partial = event.message # type: ignore
+                            self._state.stream_message = event.message # type: ignore
+                        elif event_type == "message_update":
+                            partial = event.message # type: ignore
+                            self._state.stream_message = event.message # type: ignore
+                        elif event_type == "message_end":
+                            partial = None
+                            self._state.stream_message = None
+                            self.append_message(event.message) # type: ignore
+                        elif event_type == "tool_execution_start":
+                            self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
+                        elif event_type == "tool_execution_end":
+                            self._state.pending_tool_calls.discard(event.tool_call_id) # type: ignore
+                        elif event_type == "turn_end":
+                            if getattr(event.message, "role", None) == "assistant" and getattr(event.message, "error_message", None): # type: ignore
+                                self._state.error = getattr(event.message, "error_message", None) # type: ignore
+                        elif event_type == "agent_end":
+                            self._state.is_streaming = False
+                            self._state.stream_message = None
                     
                     self._emit(event)
                     
@@ -330,14 +333,18 @@ class Agent:
                     error_message=str(err),
                     timestamp=int(time.time() * 1000)
                 )
-                self.append_message(error_msg) # type: ignore
-                self._state.error = str(err)
+                async with self._state_lock:
+                    self._state.stream_message = None
+                    self._state.pending_tool_calls.clear()
+                    self.append_message(error_msg) # type: ignore
+                    self._state.error = str(err)
                 from sentarc_agent.types import AgentEndEvent
                 self._emit(AgentEndEvent(messages=[error_msg])) # type: ignore
             finally:
-                self._state.is_streaming = False
-                self._state.stream_message = None
-                self._state.pending_tool_calls.clear()
+                async with self._state_lock:
+                    self._state.is_streaming = False
+                    self._state.stream_message = None
+                    self._state.pending_tool_calls.clear()
                 self.abort_controller = None
 
         self.running_prompt = asyncio.create_task(run())
