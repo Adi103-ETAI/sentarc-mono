@@ -19,7 +19,7 @@ from ..types import (
     ToolUseStartEvent, ToolUseDeltaEvent, ToolUseEndEvent,
     StopEvent, ErrorEvent, ToolUseContent, ToolResultContent
 )
-from ..env import get_env_api_key
+from ..env import get_env_api_key, sanitize_api_key
 from ..transform_messages import to_openai_messages, transform_messages
 
 
@@ -41,11 +41,16 @@ class OpenAIProvider:
         if not api_key:
             raise RuntimeError(f"No API key found for {model.provider}")
 
-        client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=model.base_url,
-            default_headers=model.extra_headers
-        )
+        try:
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=model.base_url,
+                default_headers=model.extra_headers
+            )
+        except Exception as e:
+            # Sanitize API key in error messages
+            safe_key = sanitize_api_key(api_key)
+            raise RuntimeError(f"Failed to initialize OpenAI client (key: {safe_key}): {e}") from e
 
         # Convert messages
         transformed = transform_messages(context.messages, model)

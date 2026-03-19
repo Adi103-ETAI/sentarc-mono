@@ -3,16 +3,16 @@ Anthropic provider.
 """
 from __future__ import annotations
 import json
-from typing import AsyncIterator, TYPE_CHECKING
+from typing import AsyncIterator, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..types import Context, ModelDef
 
 from ..types import (
-    ToolUseContent, TokenUsage, ReasoningEffort,
+    ToolUseContent, TokenUsage, ReasoningEffort, StreamEvent,
     StartEvent, TextStartEvent, TextDeltaEvent, TextEndEvent,
     ThinkingStartEvent, ThinkingDeltaEvent, ThinkingEndEvent,
     ToolUseStartEvent, ToolUseDeltaEvent, ToolUseEndEvent,
-    StopEvent, ErrorEvent, StreamEvent,
+    StopEvent, ErrorEvent,
 )
 from ..transform_messages import to_anthropic
 
@@ -38,29 +38,26 @@ class AnthropicProvider:
 
     async def stream(
         self,
-        client, # Client is passed in? Or should be instantiated inside? 
-                # Original didn't instantiate. But typically provider class manages client or takes config.
-                # OpenAI/Google manage it inside. Anthropic should too for consistency.
-                # However, original 'stream' took 'client'.
-                # Let's instantiate inside to match others, assuming env var API key.
         model: "ModelDef",
         context: "Context",
-        options: Optional[StreamOptions] = None,
+        options: Optional[any] = None,
     ) -> AsyncIterator[StreamEvent]:
-        
+        """Stream from Anthropic API."""
+
         from anthropic import AsyncAnthropic
-        from ..env import get_env_api_key
-        
+        from ..env import get_env_api_key, sanitize_api_key
+        from ..transform_messages import to_anthropic, transform_messages
+
         api_key = get_env_api_key("anthropic")
         if not api_key:
-             raise RuntimeError("No API key found for anthropic")
+            raise RuntimeError("No API key found for anthropic")
 
-        # ... imports ...
-        from ..transform_messages import to_anthropic, transform_messages
-        
-        # ... logic ...
-
-        client_instance = AsyncAnthropic(api_key=api_key, base_url=model.base_url)
+        try:
+            client_instance = AsyncAnthropic(api_key=api_key, base_url=model.base_url)
+        except Exception as e:
+            # Sanitize API key in error messages
+            safe_key = sanitize_api_key(api_key)
+            raise RuntimeError(f"Failed to initialize Anthropic client (key: {safe_key}): {e}") from e
         
         reasoning = options.reasoning_effort if options else ReasoningEffort.NONE
 

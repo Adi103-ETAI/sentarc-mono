@@ -5,6 +5,25 @@ import os
 from pathlib import Path
 from typing import Optional
 
+
+def sanitize_api_key(key: Optional[str]) -> str:
+    """
+    Sanitize API key for logging/error messages.
+    Shows first 4 and last 4 characters, hides the rest.
+
+    Args:
+        key: The API key to sanitize
+
+    Returns:
+        Sanitized key like "sk-1...xyz" or "***" if None/empty
+    """
+    if not key:
+        return "***"
+    if len(key) <= 12:
+        return "***"
+    return f"{key[:4]}...{key[-4:]}"
+
+
 def _get_vertex_adc_path() -> Optional[Path]:
     """Get path to Application Default Credentials JSON."""
     if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
