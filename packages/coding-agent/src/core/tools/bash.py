@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal as _signal
 import tempfile
 from typing import Any, Callable, Dict, List, Optional
@@ -15,6 +16,38 @@ from sentarc_coding_agent.core.tools.truncate import (
     format_size,
     truncate_tail,
 )
+
+
+# Dangerous command patterns that could cause system damage
+DANGEROUS_PATTERNS = [
+    (r'rm\s+-rf\s+/', "Recursive deletion of root directory"),
+    (r'rm\s+-rf\s+\*', "Recursive deletion with wildcard"),
+    (r':\(\)\{\s*:\|:&\s*\};:', "Fork bomb pattern"),
+    (r'dd\s+if=.*\s+of=/dev/(sd|hd|nvme)', "Writing directly to disk device"),
+    (r'mkfs\.', "Filesystem formatting command"),
+    (r'>\s*/dev/(sd|hd|nvme)', "Redirecting output to disk device"),
+    (r'chmod\s+-R\s+777\s+/', "Changing permissions on root directory"),
+    (r'curl.*\|\s*(sh|bash|python)', "Piping download directly to interpreter"),
+    (r'wget.*-O.*\|\s*(sh|bash|python)', "Piping download directly to interpreter"),
+]
+
+
+def _validate_command_safety(command: str) -> None:
+    """
+    Check command for dangerous patterns that could cause system damage.
+
+    Raises:
+        Exception: If a dangerous pattern is detected.
+    """
+    for pattern, description in DANGEROUS_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            raise Exception(
+                f"Dangerous command pattern detected: {description}\n"
+                f"Pattern: {pattern}\n"
+                f"Command: {command}\n\n"
+                f"This command could cause system damage. "
+                f"If you're sure this is safe, modify the pattern list in bash.py."
+            )
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -67,6 +100,9 @@ class BashTool:
     ) -> Dict[str, Any]:
         command: str = args["command"]
         timeout: Optional[float] = args.get("timeout")
+
+        # Validate command safety before execution
+        _validate_command_safety(command)
 
         if self.command_prefix:
             command = f"{self.command_prefix}\n{command}"
