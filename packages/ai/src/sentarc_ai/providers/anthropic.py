@@ -3,9 +3,9 @@ Anthropic provider.
 """
 from __future__ import annotations
 import json
-from typing import AsyncIterator, TYPE_CHECKING
+from typing import AsyncIterator, TYPE_CHECKING, Optional
 if TYPE_CHECKING:
-    from ..types import Context, ModelDef
+    from ..types import Context, ModelDef, StreamOptions
 
 from ..types import (
     ToolUseContent, TokenUsage, ReasoningEffort,
@@ -38,14 +38,9 @@ class AnthropicProvider:
 
     async def stream(
         self,
-        client, # Client is passed in? Or should be instantiated inside? 
-                # Original didn't instantiate. But typically provider class manages client or takes config.
-                # OpenAI/Google manage it inside. Anthropic should too for consistency.
-                # However, original 'stream' took 'client'.
-                # Let's instantiate inside to match others, assuming env var API key.
         model: "ModelDef",
         context: "Context",
-        options: Optional[StreamOptions] = None,
+        options: Optional["StreamOptions"] = None,
     ) -> AsyncIterator[StreamEvent]:
         
         from anthropic import AsyncAnthropic

@@ -78,6 +78,7 @@ class AgentState:
 class AgentLoopConfig(StreamOptions):
     model: ModelDef = None # type: ignore
     thinking_budgets: Optional[Dict[str, int]] = None
+    abort_signal: Optional[asyncio.Event] = None
     
     # Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
     convert_to_llm: Callable[[List[AgentMessage]], Union[List[Message], Awaitable[List[Message]]]] = None # type: ignore
@@ -183,3 +184,4 @@ class AgentOptions:
     session_id: Optional[str] = None
     get_api_key: Optional[Callable[[str], Union[Optional[str], Awaitable[Optional[str]]]]] = None
     thinking_budgets: Optional[Dict[str, int]] = None
+    max_messages: Optional[int] = None

@@ -14,7 +14,8 @@ from sentarc_ai.types import (
     Message,
     ModelDef,
     ImageContent,
-    ReasoningEffort
+    ReasoningEffort,
+    TextContent,
 )
 
 from sentarc_agent.types import (
@@ -69,6 +70,8 @@ class Agent:
         
         self.listeners: Set[Callable[[AgentEvent], None]] = set()
         self.abort_controller: Optional[asyncio.Event] = None
+        self._state_lock = asyncio.Lock()
+        self.max_messages = options.max_messages if getattr(options, "max_messages", None) else 200
         
         self.steering_queue: List[AgentMessage] = []
         self.follow_up_queue: List[AgentMessage] = []
@@ -123,6 +126,8 @@ class Agent:
 
     def append_message(self, m: AgentMessage):
         self._state.messages.append(m)
+        if len(self._state.messages) > self.max_messages:
+            self._compact_messages()
 
     def steer(self, m: AgentMessage):
         """Queue a steering message to interrupt the agent mid-run."""
@@ -277,7 +282,8 @@ class Agent:
             get_api_key=self.get_api_key,
             get_steering_messages=get_steering_messages,
             get_follow_up_messages=get_follow_up_messages,
-            thinking_budgets=self._thinking_budgets
+            thinking_budgets=self._thinking_budgets,
+            abort_signal=self.abort_controller,
         )
 
         partial = None
@@ -292,31 +298,35 @@ class Agent:
                     # Update internal state based on events
                     event_type = getattr(event, "type", None)
                     
-                    if event_type == "message_start":
-                        partial = event.message # type: ignore
-                        self._state.stream_message = event.message # type: ignore
-                    elif event_type == "message_update":
-                        partial = event.message # type: ignore
-                        self._state.stream_message = event.message # type: ignore
-                    elif event_type == "message_end":
-                        partial = None
-                        self._state.stream_message = None
-                        self.append_message(event.message) # type: ignore
-                    elif event_type == "tool_execution_start":
-                        self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
-                    elif event_type == "tool_execution_end":
-                        self._state.pending_tool_calls.discard(event.tool_call_id) # type: ignore
-                    elif event_type == "turn_end":
-                        if getattr(event.message, "role", None) == "assistant" and getattr(event.message, "error_message", None): # type: ignore
-                            self._state.error = getattr(event.message, "error_message", None) # type: ignore
-                    elif event_type == "agent_end":
-                        self._state.is_streaming = False
-                        self._state.stream_message = None
+                    async with self._state_lock:
+                        if event_type == "message_start":
+                            partial = event.message # type: ignore
+                            self._state.stream_message = event.message # type: ignore
+                        elif event_type == "message_update":
+                            partial = event.message # type: ignore
+                            self._state.stream_message = event.message # type: ignore
+                        elif event_type == "message_end":
+                            partial = None
+                            self._state.stream_message = None
+                            self.append_message(event.message) # type: ignore
+                        elif event_type == "tool_execution_start":
+                            self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
+                        elif event_type == "tool_execution_end":
+                            self._state.pending_tool_calls.discard(event.tool_call_id) # type: ignore
+                        elif event_type == "turn_end":
+                            if getattr(event.message, "role", None) == "assistant" and getattr(event.message, "error_message", None): # type: ignore
+                                self._state.error = getattr(event.message, "error_message", None) # type: ignore
+                        elif event_type == "agent_end":
+                            self._state.is_streaming = False
+                            self._state.stream_message = None
                     
                     self._emit(event)
                     
             except Exception as err:
                 from sentarc_ai.types import AssistantMessage
+                async with self._state_lock:
+                    self._state.stream_message = None
+                    self._state.pending_tool_calls.clear()
                 error_msg = AssistantMessage(
                     role="assistant",
                     content=[TextContent(type="text", text="")], # type: ignore
@@ -333,13 +343,19 @@ class Agent:
                 from sentarc_agent.types import AgentEndEvent
                 self._emit(AgentEndEvent(messages=[error_msg])) # type: ignore
             finally:
-                self._state.is_streaming = False
-                self._state.stream_message = None
-                self._state.pending_tool_calls.clear()
+                async with self._state_lock:
+                    self._state.is_streaming = False
+                    self._state.stream_message = None
+                    self._state.pending_tool_calls.clear()
                 self.abort_controller = None
 
         self.running_prompt = asyncio.create_task(run())
         await self.running_prompt
+
+    def _compact_messages(self):
+        system_messages = [m for m in self._state.messages if isinstance(m, dict) and m.get("role") == "system"]
+        recent = self._state.messages[-50:]
+        self._state.messages = system_messages + [m for m in recent if m not in system_messages]
 
     def _emit(self, e: AgentEvent):
         for listener in self.listeners:

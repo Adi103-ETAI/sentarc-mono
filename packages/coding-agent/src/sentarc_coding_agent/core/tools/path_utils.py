@@ -51,8 +51,19 @@ def resolve_to_cwd(file_path: str, cwd: str) -> str:
     """Resolve a path relative to the given cwd."""
     expanded = expand_path(file_path)
     if os.path.isabs(expanded):
-        return expanded
-    return str(Path(cwd) / expanded)
+        return str(Path(expanded).resolve())
+
+    resolved = (Path(cwd) / expanded).resolve()
+    cwd_resolved = Path(cwd).resolve()
+
+    if not str(resolved).startswith(str(cwd_resolved)):
+        raise Exception(
+            f"Path traversal detected: {file_path} resolves outside working directory.\n"
+            f"Resolved: {resolved}\n"
+            f"Working directory: {cwd_resolved}"
+        )
+
+    return str(resolved)
 
 
 def resolve_read_path(file_path: str, cwd: str) -> str:

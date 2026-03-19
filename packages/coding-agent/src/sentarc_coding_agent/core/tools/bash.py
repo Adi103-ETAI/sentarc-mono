@@ -6,6 +6,7 @@ import asyncio
 import os
 import signal as _signal
 import tempfile
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from sentarc_coding_agent.core.tools.truncate import (
@@ -29,6 +30,23 @@ def _kill_process_tree(pid: int) -> None:
         os.kill(pid, _signal.SIGTERM)
     except Exception:
         pass
+
+_DANGEROUS_PATTERNS = [
+    r"\brm\s+-rf\s+/",
+    r":\(\)\{\s*:\|:&\s*\};:",
+    r"\bdd\s+if=",
+    r"\bmkfs\.",
+]
+
+
+def _validate_command(command: str) -> None:
+    """Raise if command contains clearly dangerous patterns."""
+    for pattern in _DANGEROUS_PATTERNS:
+        if re.search(pattern, command, flags=re.IGNORECASE):
+            raise Exception(
+                f"Command contains potentially dangerous pattern: {pattern}\n"
+                f"Command: {command}"
+            )
 
 
 class BashTool:
@@ -77,6 +95,8 @@ class BashTool:
         if not os.path.isdir(self.cwd):
             raise Exception(f"Working directory does not exist: {self.cwd}")
 
+        _validate_command(command)
+
         # We'll collect output chunks and optionally write to a temp file
         chunks: List[bytes] = []
         chunks_bytes = 0
@@ -112,8 +132,13 @@ class BashTool:
 
                 # Start writing to temp file once we exceed threshold
                 if total_bytes > DEFAULT_MAX_BYTES and temp_file is None:
-                    fd, temp_file_path = tempfile.mkstemp(prefix="arc-bash-", suffix=".log")
-                    temp_file = os.fdopen(fd, "wb")
+                    temp_file = tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        prefix="arc-bash-",
+                        suffix=".log",
+                        delete=True,
+                    )
+                    temp_file_path = temp_file.name
                     for c in chunks:
                         temp_file.write(c)
 
@@ -160,10 +185,7 @@ class BashTool:
         timed_out = False
         try:
             if timeout and timeout > 0:
-                await asyncio.wait_for(
-                    asyncio.gather(tasks[0]),
-                    timeout=timeout,
-                )
+                await asyncio.wait_for(tasks[0], timeout=timeout)
             else:
                 await tasks[0]
         except asyncio.TimeoutError:
@@ -178,6 +200,8 @@ class BashTool:
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             if temp_file is not None:
                 temp_file.close()
 

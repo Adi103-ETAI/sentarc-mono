@@ -46,14 +46,20 @@ def get_default_session_dir(cwd: str) -> str:
 def parse_session_entries(content: str) -> List[Dict[str, Any]]:
     """Parse JSONL content into list of entry dicts."""
     entries = []
-    for line in content.strip().splitlines():
+    errors = []
+    for line_num, line in enumerate(content.strip().splitlines(), 1):
         line = line.strip()
         if not line:
             continue
         try:
             entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            errors.append(f"Line {line_num}: {e.msg}")
+    if errors:
+        import sys
+        print(f"Warning: Failed to parse {len(errors)} session entries:", file=sys.stderr)
+        for err in errors[:5]:
+            print(f"  {err}", file=sys.stderr)
     return entries
 
 
@@ -239,7 +245,6 @@ class SessionManager:
         """Build by_id index and find leaf."""
         self._by_id = {}
         self._labels_by_id = {}
-        last_id: Optional[str] = None
 
         for entry in self._file_entries:
             if entry.get("type") == "session":
@@ -253,16 +258,20 @@ class SessionManager:
                     label = entry.get("label")
                     if target and label is not None:
                         self._labels_by_id[target] = label
-                last_id = eid
+        self._update_leaf_id()
 
-        self._leaf_id = last_id
+    def _update_leaf_id(self) -> None:
+        """Set leaf_id to the newest entry without children."""
+        child_parents = {e.get("parentId") for e in self._by_id.values() if isinstance(e, dict)}
+        candidates = [eid for eid in self._by_id.keys() if eid and eid not in child_parents]
+        self._leaf_id = candidates[-1] if candidates else None
 
     def _append_entry(self, entry: Dict[str, Any]) -> None:
         self._file_entries.append(entry)
         eid = entry.get("id")
         if eid and entry.get("type") != "session":
             self._by_id[eid] = entry
-        self._leaf_id = eid
+        self._update_leaf_id()
         if self.persist:
             self._persist(entry)
 

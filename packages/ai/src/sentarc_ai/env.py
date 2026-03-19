@@ -75,4 +75,17 @@ def get_env_api_key(provider: str) -> Optional[str]:
     }
     
     env_var = ENV_MAP.get(provider)
-    return os.environ.get(env_var) if env_var else None
+    if not env_var:
+        return None
+
+    value = os.environ.get(env_var)
+    if value is None:
+        return None
+
+    value = value.strip()
+    if not value:
+        raise ValueError(f"Environment variable {env_var} is empty or whitespace")
+    if len(value) < 10:
+        import sys
+        print(f"Warning: {env_var} seems too short ({len(value)} chars)", file=sys.stderr)
+    return value

@@ -86,6 +86,8 @@ class ReadTool:
         if mime_type:
             # Read as image
             with open(absolute_path, "rb") as f:
+                if signal and signal.is_set():
+                    raise Exception("Operation aborted")
                 data = base64.b64encode(f.read()).decode("ascii")
             text_note = f"Read image file [{mime_type}]"
             return {
@@ -98,6 +100,8 @@ class ReadTool:
         else:
             # Read as text
             with open(absolute_path, "r", encoding="utf-8", errors="replace") as f:
+                if signal and signal.is_set():
+                    raise Exception("Operation aborted")
                 text_content = f.read()
 
             all_lines = text_content.split("\n")

@@ -35,7 +35,7 @@ class OpenAIProvider:
     ) -> AsyncIterator[StreamEvent]:
         """Stream from OpenAI API."""
         
-        reasoning = options.getattr("reasoning_effort", ReasoningEffort.NONE) if options else ReasoningEffort.NONE
+        reasoning = getattr(options, "reasoning_effort", ReasoningEffort.NONE) if options else ReasoningEffort.NONE
         
         api_key = get_env_api_key(model.provider)
         if not api_key:
@@ -145,5 +145,8 @@ class OpenAIProvider:
                 
             yield StopEvent(stop_reason="end_turn", usage=TokenUsage())
             
+        except openai.APIError as e:
+            safe_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) >= 8 else "***"
+            raise RuntimeError(f"OpenAI API error (key {safe_key}): {e}") from e
         except Exception as e:
-            raise RuntimeError(str(e))
+            raise RuntimeError(f"Unexpected error during OpenAI streaming: {e}") from e

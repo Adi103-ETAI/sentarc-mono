@@ -90,6 +90,12 @@ async def _with_error_handling(
             error_message=str(e)
         )
         yield ErrorEvent(error=msg, reason="error")
+    finally:
+        if hasattr(generator, "aclose"):
+            try:
+                await generator.aclose()
+            except Exception:
+                pass
 
 async def stream(
     model: ModelDef,

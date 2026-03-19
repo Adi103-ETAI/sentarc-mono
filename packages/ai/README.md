@@ -167,13 +167,15 @@ for call in tool_calls:
         # Add tool result with text content
         context.messages.append(ToolResultMessage(
             tool_call_id=call.id,
-            content=[TextContent(text=result)],
-            is_error=False
-        ))
+    content=[TextContent(text=result)],
+    is_error=False
+))
 
 # Continue the conversation so the model can read the tool result
 continuation_text, _ = await complete(model, context)
 ```
+
+Tool results must be a list of content blocks (for example `TextContent`). Passing raw strings is not supported by the client adapters and will be ignored by providers expecting structured content.
 
 ### Streaming Tool Calls with Partial JSON
 

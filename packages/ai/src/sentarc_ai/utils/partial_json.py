@@ -18,6 +18,12 @@ def parse_streaming_json(partial_json: str | None) -> dict:
             repaired = repair_json(partial_json, return_objects=True)
             if isinstance(repaired, dict):
                 return repaired
-            return {}
-        except Exception:
-            return {}
+            raise ValueError(
+                f"Repaired JSON is not an object. Received type: {type(repaired)}. "
+                f"Partial: {partial_json[:200]}..."
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse JSON even with repair: {e}\n"
+                f"Partial JSON: {partial_json[:200]}..."
+            )

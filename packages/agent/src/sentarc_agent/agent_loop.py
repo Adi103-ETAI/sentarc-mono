@@ -11,7 +11,8 @@ from sentarc_ai.types import (
     Context,
     ToolCallContent,
     ToolResultMessage,
-    AssistantMessage
+    AssistantMessage,
+    TextContent,
 )
 from sentarc_ai.utils.validation import validate_tool_arguments
 
@@ -153,7 +154,10 @@ async def _run_loop(
             tool_results: List[ToolResultMessage] = []
             if has_more_tool_calls:
                 async for event in _execute_tool_calls(
-                    current_context.tools, message, config.get_steering_messages
+                    current_context.tools,
+                    message,
+                    config.get_steering_messages,
+                    config.abort_signal if hasattr(config, "abort_signal") else None,
                 ):
                     if isinstance(event, tuple):
                         tool_results.extend(event[0])
@@ -264,55 +268,59 @@ async def _stream_assistant_response(
 async def _execute_tool_calls(
     tools: Optional[List[AgentTool]],
     assistant_message: AssistantMessage,
-    get_steering_messages: Optional[Callable[[], Awaitable[List[AgentMessage]]]]
+    get_steering_messages: Optional[Callable[[], Awaitable[List[AgentMessage]]]],
+    abort_signal: Optional[asyncio.Event] = None,
 ) -> AsyncGenerator[Any, None]: # Yields AgentEvents, then finally (tool_results, steering_messages)
     tool_calls = [c for c in assistant_message.content if isinstance(c, ToolCallContent)]
     results: List[ToolResultMessage] = []
     steering_messages: Optional[List[AgentMessage]] = None
-
-    for index, tool_call in enumerate(tool_calls):
-        tool = next((t for t in (tools or []) if t.name == tool_call.name), None)
-
+    # Emit start events first
+    for tool_call in tool_calls:
         yield ToolExecutionStartEvent(
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
             args=tool_call.arguments
         )
 
-        result: AgentToolResult
-        is_error = False
-
+    async def execute_single(index: int, tool_call: ToolCallContent):
+        tool = next((t for t in (tools or []) if t.name == tool_call.name), None)
         try:
             if not tool:
                 raise ValueError(f"Tool {tool_call.name} not found")
 
-            # Validate arguments mapping dictionaries natively using json schema utility port
             validated_args = validate_tool_arguments(tool, tool_call)
 
-            def on_update(partial_result: AgentToolResult):
-                return ToolExecutionUpdateEvent(
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_call.name,
-                    args=tool_call.arguments,
-                    partial_result=partial_result
-                )
-            # In purely async python, bridging sync callbacks to event yielders can be tricky.
-            # We skip intermediate partial yielding inside the execute function here for simplicity 
-            # unless the tool specifically queues it.
-
-            exec_res = tool.execute(tool_call.id, validated_args, None, None)
+            exec_res = tool.execute(tool_call.id, validated_args, abort_signal, None)
             if asyncio.iscoroutine(exec_res):
                 result = await exec_res
             else:
                 result = exec_res # type: ignore
 
-        except Exception as e:
-            result = AgentToolResult(
-                content=[TextContent(type="text", text=str(e))],
-                details={}
-            )
-            is_error = True
+            if isinstance(result, dict):
+                if "content" not in result or not isinstance(result["content"], list):
+                    raise ValueError(f"Tool {tool_call.name} returned invalid content")
+                details = result.get("details", {})
+                result = AgentToolResult(content=result["content"], details=details)
+            elif not isinstance(result, AgentToolResult):
+                raise ValueError(f"Tool {tool_call.name} returned invalid type: {type(result)}")
 
+            return (index, result, False)
+        except Exception as e:
+            return (
+                index,
+                AgentToolResult(
+                    content=[TextContent(type="text", text=str(e))],
+                    details={}
+                ),
+                True,
+            )
+
+    task_results = await asyncio.gather(
+        *(execute_single(i, tc) for i, tc in enumerate(tool_calls))
+    )
+
+    for index, result, is_error in sorted(task_results, key=lambda x: x[0]):
+        tool_call = tool_calls[index]
         yield ToolExecutionEndEvent(
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
@@ -333,18 +341,8 @@ async def _execute_tool_calls(
         yield MessageStartEvent(message=tool_result_message) # type: ignore
         yield MessageEndEvent(message=tool_result_message) # type: ignore
 
-        # Check for steering mid-tool executions
-        if get_steering_messages:
-            steering = await get_steering_messages()
-            if steering:
-                steering_messages = steering
-                remaining_calls = tool_calls[index + 1:]
-                for skipped in remaining_calls:
-                    skipped_res = _skip_tool_call(skipped)
-                    for event in skipped_res[:-1]:
-                        yield event
-                    results.append(skipped_res[-1]) # type: ignore
-                break
+    if get_steering_messages:
+        steering_messages = await get_steering_messages()
 
     yield (results, steering_messages)
 
