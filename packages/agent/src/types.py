@@ -78,7 +78,7 @@ class AgentState:
 class AgentLoopConfig(StreamOptions):
     model: ModelDef = None # type: ignore
     thinking_budgets: Optional[Dict[str, int]] = None
-    
+
     # Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
     convert_to_llm: Callable[[List[AgentMessage]], Union[List[Message], Awaitable[List[Message]]]] = None # type: ignore
 
@@ -93,6 +93,9 @@ class AgentLoopConfig(StreamOptions):
 
     # Returns follow-up messages to process after the agent would otherwise stop.
     get_follow_up_messages: Optional[Callable[[], Awaitable[List[AgentMessage]]]] = None
+
+    # Abort signal for cancelling operations
+    abort_signal: Optional[asyncio.Event] = None
 
 
 # Events emitted by the Agent for UI updates.

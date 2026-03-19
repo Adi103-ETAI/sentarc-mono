@@ -278,7 +278,8 @@ class Agent:
             get_api_key=self.get_api_key,
             get_steering_messages=get_steering_messages,
             get_follow_up_messages=get_follow_up_messages,
-            thinking_budgets=self._thinking_budgets
+            thinking_budgets=self._thinking_budgets,
+            abort_signal=self.abort_controller
         )
 
         partial = None

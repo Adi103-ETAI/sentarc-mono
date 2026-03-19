@@ -154,7 +154,7 @@ async def _run_loop(
             tool_results: List[ToolResultMessage] = []
             if has_more_tool_calls:
                 async for event in _execute_tool_calls(
-                    current_context.tools, message, config.get_steering_messages
+                    current_context.tools, message, config.get_steering_messages, config.abort_signal
                 ):
                     if isinstance(event, tuple):
                         tool_results.extend(event[0])
@@ -265,7 +265,8 @@ async def _stream_assistant_response(
 async def _execute_tool_calls(
     tools: Optional[List[AgentTool]],
     assistant_message: AssistantMessage,
-    get_steering_messages: Optional[Callable[[], Awaitable[List[AgentMessage]]]]
+    get_steering_messages: Optional[Callable[[], Awaitable[List[AgentMessage]]]],
+    abort_signal: Optional[asyncio.Event] = None
 ) -> AsyncGenerator[Any, None]: # Yields AgentEvents, then finally (tool_results, steering_messages)
     tool_calls = [c for c in assistant_message.content if isinstance(c, ToolCallContent)]
     results: List[ToolResultMessage] = []
@@ -298,10 +299,10 @@ async def _execute_tool_calls(
                     partial_result=partial_result
                 )
             # In purely async python, bridging sync callbacks to event yielders can be tricky.
-            # We skip intermediate partial yielding inside the execute function here for simplicity 
+            # We skip intermediate partial yielding inside the execute function here for simplicity
             # unless the tool specifically queues it.
 
-            exec_res = tool.execute(tool_call.id, validated_args, None, None)
+            exec_res = tool.execute(tool_call.id, validated_args, abort_signal, None)
             if asyncio.iscoroutine(exec_res):
                 result = await exec_res
             else:
