@@ -11,7 +11,8 @@ from sentarc_ai.types import (
     Context,
     ToolCallContent,
     ToolResultMessage,
-    AssistantMessage
+    AssistantMessage,
+    TextContent
 )
 from sentarc_ai.utils.validation import validate_tool_arguments
 

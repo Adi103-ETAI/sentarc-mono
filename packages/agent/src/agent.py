@@ -14,7 +14,8 @@ from sentarc_ai.types import (
     Message,
     ModelDef,
     ImageContent,
-    ReasoningEffort
+    ReasoningEffort,
+    TextContent
 )
 
 from sentarc_agent.types import (
