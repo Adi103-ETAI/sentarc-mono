@@ -148,8 +148,13 @@ class BashTool:
 
                 # Start writing to temp file once we exceed threshold
                 if total_bytes > DEFAULT_MAX_BYTES and temp_file is None:
-                    fd, temp_file_path = tempfile.mkstemp(prefix="arc-bash-", suffix=".log")
-                    temp_file = os.fdopen(fd, "wb")
+                    temp_file = tempfile.NamedTemporaryFile(
+                        mode='wb',
+                        prefix="arc-bash-",
+                        suffix=".log",
+                        delete=False  # We'll manage deletion manually for safety
+                    )
+                    temp_file_path = temp_file.name
                     for c in chunks:
                         temp_file.write(c)
 
@@ -223,6 +228,9 @@ class BashTool:
                         pass  # Ignore other exceptions during cleanup
             if temp_file is not None:
                 temp_file.close()
+                # Note: temp file is intentionally not deleted here as the path is returned
+                # to the user in the details for viewing large outputs. Consider implementing
+                # cleanup on session end or periodic cleanup of old temp files.
 
         try:
             exit_code = await asyncio.wait_for(proc.wait(), timeout=5.0)

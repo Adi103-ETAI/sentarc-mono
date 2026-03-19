@@ -49,7 +49,13 @@ def validate_tool_arguments(tool: Tool, tool_call: ToolCallType) -> Dict[str, An
             try:
                 args = json.loads(args)
             except json.JSONDecodeError as e:
-                raise ValueError(f"Failed to parse tool arguments as JSON: {e}")
+                # Preserve detailed parsing error information
+                args_preview = args[:200] + "..." if len(args) > 200 else args
+                raise ValidationError(
+                    f'Failed to parse tool arguments as JSON for "{tool.name}":\n'
+                    f'  Error: {e.msg} at line {e.lineno} column {e.colno}\n'
+                    f'  Received: {args_preview}'
+                )
                 
         # jsonschema validates in place and returns None if successful
         validate(instance=args, schema=tool.parameters)

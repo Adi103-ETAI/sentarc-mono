@@ -149,6 +149,10 @@ class OpenAIProvider:
                 yield TextEndEvent(text="")
                 
             yield StopEvent(stop_reason="end_turn", usage=TokenUsage())
-            
+
+        except openai.APIError as e:
+            # Preserve original exception with context
+            raise RuntimeError(f"OpenAI API error: {e}") from e
         except Exception as e:
-            raise RuntimeError(str(e))
+            # Preserve exception chain for debugging
+            raise RuntimeError(f"Unexpected error during streaming: {e}") from e

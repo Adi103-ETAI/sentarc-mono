@@ -71,6 +71,7 @@ class Agent:
         self.listeners: Set[Callable[[AgentEvent], None]] = set()
         self.abort_controller: Optional[asyncio.Event] = None
         self._state_lock = asyncio.Lock()  # Protect concurrent state access
+        self._added_message_ids: Set[int] = set()  # Track message IDs to prevent duplicates
 
         self.steering_queue: List[AgentMessage] = []
         self.follow_up_queue: List[AgentMessage] = []
@@ -306,7 +307,11 @@ class Agent:
                         elif event_type == "message_end":
                             partial = None
                             self._state.stream_message = None
-                            self.append_message(event.message) # type: ignore
+                            # Track message ID to prevent duplicates
+                            msg_id = id(event.message) # type: ignore
+                            if msg_id not in self._added_message_ids:
+                                self.append_message(event.message) # type: ignore
+                                self._added_message_ids.add(msg_id)
                         elif event_type == "tool_execution_start":
                             self._state.pending_tool_calls.add(event.tool_call_id) # type: ignore
                         elif event_type == "tool_execution_end":
@@ -334,6 +339,7 @@ class Agent:
                     timestamp=int(time.time() * 1000)
                 )
                 async with self._state_lock:
+                    # Clear stream state immediately on error
                     self._state.stream_message = None
                     self._state.pending_tool_calls.clear()
                     self.append_message(error_msg) # type: ignore

@@ -46,14 +46,22 @@ def get_default_session_dir(cwd: str) -> str:
 def parse_session_entries(content: str) -> List[Dict[str, Any]]:
     """Parse JSONL content into list of entry dicts."""
     entries = []
-    for line in content.strip().splitlines():
+    errors = []
+    for line_num, line in enumerate(content.strip().splitlines(), 1):
         line = line.strip()
         if not line:
             continue
         try:
             entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            errors.append(f"Line {line_num}: {e.msg}")
+
+    if errors:
+        import sys
+        print(f"Warning: Failed to parse {len(errors)} session entries:", file=sys.stderr)
+        for err in errors[:5]:  # Show first 5 errors
+            print(f"  {err}", file=sys.stderr)
+
     return entries
 
 

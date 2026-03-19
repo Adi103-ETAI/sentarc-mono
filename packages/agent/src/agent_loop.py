@@ -308,6 +308,14 @@ async def _execute_tool_calls(
             else:
                 result = exec_res # type: ignore
 
+            # Validate result structure
+            if not isinstance(result, dict):
+                raise ValueError(f"Tool {tool_call.name} returned invalid type: {type(result).__name__}. Expected dict with 'content' field.")
+            if "content" not in result:
+                raise ValueError(f"Tool {tool_call.name} missing required 'content' field in result")
+            if not isinstance(result["content"], list):
+                raise ValueError(f"Tool {tool_call.name} 'content' must be a list, got {type(result['content']).__name__}")
+
         except Exception as e:
             result = AgentToolResult(
                 content=[TextContent(type="text", text=str(e))],
