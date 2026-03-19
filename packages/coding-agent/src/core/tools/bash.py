@@ -211,9 +211,16 @@ class BashTool:
                 except Exception:
                     pass
         finally:
+            # Properly clean up tasks
             for task in tasks:
                 if not task.done():
                     task.cancel()
+                    try:
+                        await task  # Wait for cancellation to complete
+                    except asyncio.CancelledError:
+                        pass  # Expected when task is cancelled
+                    except Exception:
+                        pass  # Ignore other exceptions during cleanup
             if temp_file is not None:
                 temp_file.close()
 
