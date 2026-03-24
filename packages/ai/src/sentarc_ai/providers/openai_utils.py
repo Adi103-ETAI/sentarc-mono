@@ -104,13 +104,7 @@ def convert_responses_messages(
                             "text": item.text
                         })
                     elif isinstance(item, ImageContent):
-                         # Assuming ImageContent has mime_type and data (base64)
-                         # types.py ImageContent definition needs verification, 
-                         # usually it has data and media_type (or mime_type)
-                         # Only include if model supports images (checked via model.input_modalities usually)
-                         # TS code: !model.input.includes("image")
-                         # Python: model.input_modalities (list of strings)
-                         if "image" in (model.input_modalities or []):
+                        if model.supports_vision:
                             content_parts.append({
                                 "type": "input_image",
                                 "detail": "auto",
@@ -140,15 +134,15 @@ def convert_responses_messages(
             if isinstance(msg.content, list):
                 for block in msg.content:
                     if isinstance(block, ThinkingContent):
-                        if block.thinking_signature:
+                        if block.signature:
                              try:
-                                 reasoning_item = json.loads(block.thinking_signature)
+                                 reasoning_item = json.loads(block.signature)
                                  output_parts.append(reasoning_item)
                              except:
                                  pass
                     elif isinstance(block, TextContent):
                         # OpenAI Responses API uses 'message' items for text output
-                        msg_id = getattr(block, 'text_signature', None)
+                        msg_id = f"msg_{msg_index}"
                         if not msg_id:
                             msg_id = f"msg_{msg_index}"
                         elif len(msg_id) > 64:
@@ -181,7 +175,7 @@ def convert_responses_messages(
             if output_parts:
                 messages.extend(output_parts)
                 
-        elif msg.role == Role.TOOL_RESULT:
+        elif msg.role == Role.TOOL:
              # ToolResultMessage
              msg: ToolResultMessage
              
@@ -199,7 +193,7 @@ def convert_responses_messages(
                  "output": text_result if has_text else "(see attached image)"
              })
              
-             if has_images and "image" in (model.input_modalities or []):
+             if has_images and model.supports_vision:
                  content_parts = [
                      {"type": "input_text", "text": "Attached image(s) from tool result:"}
                  ]
@@ -247,6 +241,11 @@ async def process_responses_stream(
     current_thinking_summary = [] 
     
     yield StartEvent(model=model.id)
+
+    def _get_value(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
     
     try:
         async for event in openai_stream:
@@ -260,10 +259,10 @@ async def process_responses_stream(
             # Let's assume event is a dictionary or object with attributes.
             # Using dictionary access for safety if it's raw JSON.
             
-            e_type = getattr(event, "type", None) or event.get("type")
+            e_type = _get_value(event, "type")
             
             if e_type == "response.output_item.added":
-                item = getattr(event, "item", None) or event.get("item", {})
+                item = _get_value(event, "item", {})
                 i_type = item.get("type")
                 
                 if i_type == "reasoning":
@@ -293,12 +292,12 @@ async def process_responses_stream(
             elif e_type == "response.reasoning_summary_part.added":
                 # Only tracking internal state, no yield
                 if current_item_type == "reasoning":
-                    part = getattr(event, "part", None) or event.get("part")
+                    part = _get_value(event, "part")
                     current_thinking_summary.append(part)
 
             elif e_type == "response.reasoning_summary_text.delta":
                  if current_item_type == "reasoning" and current_block_type == "thinking":
-                     delta = getattr(event, "delta", "") or event.get("delta", "")
+                     delta = _get_value(event, "delta", "")
                      if delta:
                          current_thinking += delta
                          # Also update last summary part text internally? 
@@ -315,14 +314,14 @@ async def process_responses_stream(
 
             elif e_type == "response.output_text.delta":
                  if current_item_type == "message" and current_block_type == "text":
-                     delta = getattr(event, "delta", "") or event.get("delta", "")
+                     delta = _get_value(event, "delta", "")
                      if delta:
                          current_text += delta
                          yield TextDeltaEvent(text=delta)
 
             elif e_type == "response.refusal.delta":
                  if current_item_type == "message" and current_block_type == "text":
-                     delta = getattr(event, "delta", "") or event.get("delta", "")
+                     delta = _get_value(event, "delta", "")
                      if delta:
                          current_text += delta
                          yield TextDeltaEvent(text=delta)
@@ -336,11 +335,11 @@ async def process_responses_stream(
 
             elif e_type == "response.function_call_arguments.done":
                  if current_item_type == "function_call":
-                     args = getattr(event, "arguments", "") or event.get("arguments", "")
+                     args = _get_value(event, "arguments", "")
                      current_tool_call["partial_json"] = args
 
             elif e_type == "response.output_item.done":
-                 item = getattr(event, "item", None) or event.get("item", {})
+                 item = _get_value(event, "item", {})
                  i_type = item.get("type")
                  
                  if i_type == "reasoning" and current_block_type == "thinking":
@@ -354,28 +353,31 @@ async def process_responses_stream(
                      
                  elif i_type == "function_call":
                      # Parse args
-                     args_str = current_tool_call.get("partial_json", "{}")
+                     args_str = current_tool_call.get("partial_json", "{}") if current_tool_call else "{}"
                      try:
                          args = json.loads(args_str)
                      except:
                          args = {}
+
+                     tool_id = current_tool_call.get("id", "call_unknown") if current_tool_call else "call_unknown"
+                     tool_name = current_tool_call.get("name", "unknown") if current_tool_call else "unknown"
                      
                      yield ToolUseEndEvent(tool_use=ToolUseContent(
-                         id=current_tool_call["id"],
-                         name=current_tool_call["name"],
+                         id=tool_id,
+                         name=tool_name,
                          arguments=args
                      ))
                      current_block_type = None
 
             elif e_type == "response.completed":
                  # Handle usage and finish
-                 resp = getattr(event, "response", None) or event.get("response", {})
+                 resp = _get_value(event, "response", {})
                  usage_data = resp.get("usage", {})
                  if usage_data:
                      usage = TokenUsage(
                          input_tokens=usage_data.get("input_tokens", 0),
                          output_tokens=usage_data.get("output_tokens", 0),
-                         total_tokens=usage_data.get("total_tokens", 0)
+                         cache_read_tokens=usage_data.get("input_tokens_details", {}).get("cached_tokens", 0),
                      )
                      # Check status for stop reason
                      status = resp.get("status")
@@ -388,8 +390,8 @@ async def process_responses_stream(
 
             elif e_type == "error":
                  # Stream error
-                 code = getattr(event, "code", "") or event.get("code")
-                 msg = getattr(event, "message", "") or event.get("message")
+                 code = _get_value(event, "code", "")
+                 msg = _get_value(event, "message", "")
                  raise RuntimeError(f"Error {code}: {msg}")
 
     except Exception as e:

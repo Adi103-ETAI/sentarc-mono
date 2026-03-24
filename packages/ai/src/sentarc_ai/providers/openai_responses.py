@@ -2,7 +2,6 @@
 OpenAI Responses API provider.
 """
 from __future__ import annotations
-import os
 from typing import AsyncIterator, Optional, Any, Dict
 
 from openai import AsyncOpenAI
@@ -27,7 +26,8 @@ class OpenAIResponsesProvider:
     ) -> AsyncIterator[StreamEvent]:
         """Stream from OpenAI Responses API."""
         
-        api_key = get_env_api_key(model.provider)
+        resolved_api_key = getattr(options, "api_key", None) if options else None
+        api_key = resolved_api_key or get_env_api_key(model.provider)
         if not api_key:
             raise RuntimeError(f"No API key found for {model.provider}")
 
@@ -55,9 +55,9 @@ class OpenAIResponsesProvider:
             params["tools"] = convert_responses_tools(context.tools)
 
         # Reasoning effort
-        reasoning = options.getattr("reasoning_effort", None) if options else None
-        if reasoning:
-             params["reasoning"] = {"effort": reasoning.value}
+        reasoning = getattr(options, "reasoning_effort", None) if options else None
+        if reasoning and reasoning != ReasoningEffort.NONE:
+            params["reasoning"] = {"effort": reasoning.value}
 
         try:
             # client.responses.create might not exist in all SDK versions yet, 

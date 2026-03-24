@@ -69,6 +69,9 @@ arc "List all .py files in src/"
 # Non-interactive mode
 arc -p "Summarize this codebase"
 
+# One-off API key (useful in CI)
+arc --provider openai --model gpt-4o --api-key "$OPENAI_API_KEY" -p "Explain this diff"
+
 # Different model
 arc --provider openai --model gpt-4o "Help me refactor"
 
@@ -105,6 +108,10 @@ Arc supports multiple LLM providers. Authenticate via API key environment variab
 arc --list-models
 arc --list-models claude  # Filter by search term
 ```
+
+Notes:
+- `--api-key` is used for the current command only and takes precedence over environment variables.
+- Session resume/continue keeps assistant and tool outputs in history for more reliable follow-up turns.
 
 **Custom models:** Add providers via `~/.arc/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google).
 

@@ -31,6 +31,14 @@ class ApiProvider:
 
 _registry: dict[str, ApiProvider] = {}
 
+_API_ALIASES: dict[str, str] = {
+    # Generated/static model catalog aliases
+    "anthropic-messages": "anthropic",
+    "openai-completions": "openai",
+    "openai-chat-completions": "openai",
+    "google-generative-ai": "google",
+}
+
 def register_api_provider(provider: ApiProvider) -> None:
     """Register an API provider."""
     # sentarc-mono logic checks for specific API type mismatch, handled here by simple map
@@ -38,7 +46,15 @@ def register_api_provider(provider: ApiProvider) -> None:
 
 def get_api_provider(api: str) -> Optional[ApiProvider]:
     """Get a registered API provider."""
-    return _registry.get(api)
+    provider = _registry.get(api)
+    if provider:
+        return provider
+
+    canonical_api = _API_ALIASES.get(api)
+    if canonical_api:
+        return _registry.get(canonical_api)
+
+    return None
 
 def clear_api_providers() -> None:
     """Clear all registered providers."""

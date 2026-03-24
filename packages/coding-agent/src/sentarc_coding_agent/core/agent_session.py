@@ -88,6 +88,7 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
 
     agent = Agent(AgentOptions(
         convert_to_llm=convert_to_llm,
+        get_api_key=(lambda _provider: api_key) if api_key else None,
         initial_state={
             "system_prompt": system_prompt,
             "model": model_def,
@@ -128,14 +129,12 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
             session.append_message(user_msg)
 
         async def _run():
-            result_messages = await agent.prompt(
-                messages=[user_msg],
-                api_key=api_key,
-            )
-            if session and result_messages:
-                for msg in result_messages:
+            before_count = len(agent.state.messages)
+            await agent.prompt(user_msg)
+            if session:
+                for msg in agent.state.messages[before_count:]:
                     role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
-                    if role in ("assistant", "toolResult"):
+                    if role in ("assistant", "tool", "toolResult"):
                         session.append_message(msg if isinstance(msg, dict) else vars(msg))
 
         await _run()
@@ -156,15 +155,13 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
                 if session:
                     session.append_message(user_msg)
 
-                result_messages = await agent.prompt(
-                    messages=[user_msg],
-                    api_key=api_key,
-                )
+                before_count = len(agent.state.messages)
+                await agent.prompt(user_msg)
 
-                if session and result_messages:
-                    for msg in result_messages:
+                if session:
+                    for msg in agent.state.messages[before_count:]:
                         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
-                        if role in ("assistant", "toolResult"):
+                        if role in ("assistant", "tool", "toolResult"):
                             session.append_message(msg if isinstance(msg, dict) else vars(msg))
 
             except (KeyboardInterrupt, EOFError):

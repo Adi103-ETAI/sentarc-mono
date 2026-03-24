@@ -250,12 +250,26 @@ async def compact_messages(
 
     try:
         from sentarc_ai.stream import complete_simple
+        from sentarc_ai.types import Context, Message, Role
+
+        llm_context = Context(
+            messages=[Message(role=Role.USER, content=user_content)],
+            system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
+        )
+
         result = await complete_simple(
             model=model,
-            messages=[{"role": "user", "content": user_content}],
-            system=SUMMARIZATION_SYSTEM_PROMPT,
+            context=llm_context,
         )
-        summary = result.get("text", "") if isinstance(result, dict) else str(result)
+
+        text_parts: List[str] = []
+        for block in getattr(result, "content", []):
+            if getattr(block, "type", None) == "text":
+                text_parts.append(getattr(block, "text", ""))
+
+        summary = "\n".join(part for part in text_parts if part).strip()
+        if not summary:
+            summary = str(result)
         summary += file_ops_text
     except Exception as e:
         # Fallback: use a simple text summary
