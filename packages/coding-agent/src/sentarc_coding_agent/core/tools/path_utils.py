@@ -48,15 +48,18 @@ def expand_path(file_path: str) -> str:
 
 
 def resolve_to_cwd(file_path: str, cwd: str) -> str:
-    """Resolve a path relative to the given cwd."""
+    """Resolve a path relative to the given cwd and enforce containment."""
     expanded = expand_path(file_path)
-    if os.path.isabs(expanded):
-        return str(Path(expanded).resolve())
-
-    resolved = (Path(cwd) / expanded).resolve()
     cwd_resolved = Path(cwd).resolve()
 
-    if not str(resolved).startswith(str(cwd_resolved)):
+    if os.path.isabs(expanded):
+        resolved = Path(expanded).resolve()
+    else:
+        resolved = (cwd_resolved / expanded).resolve()
+
+    try:
+        resolved.relative_to(cwd_resolved)
+    except ValueError:
         raise Exception(
             f"Path traversal detected: {file_path} resolves outside working directory.\n"
             f"Resolved: {resolved}\n"
@@ -76,21 +79,25 @@ def resolve_read_path(file_path: str, cwd: str) -> str:
     # Try macOS AM/PM variant
     am_pm_variant = _try_macos_screenshot_path(resolved)
     if am_pm_variant != resolved and _file_exists(am_pm_variant):
+        resolve_to_cwd(am_pm_variant, cwd)
         return am_pm_variant
 
     # Try NFD variant
     nfd_variant = _try_nfd_variant(resolved)
     if nfd_variant != resolved and _file_exists(nfd_variant):
+        resolve_to_cwd(nfd_variant, cwd)
         return nfd_variant
 
     # Try curly quote variant
     curly_variant = _try_curly_quote_variant(resolved)
     if curly_variant != resolved and _file_exists(curly_variant):
+        resolve_to_cwd(curly_variant, cwd)
         return curly_variant
 
     # Try combined NFD + curly quote
     nfd_curly_variant = _try_curly_quote_variant(nfd_variant)
     if nfd_curly_variant != resolved and _file_exists(nfd_curly_variant):
+        resolve_to_cwd(nfd_curly_variant, cwd)
         return nfd_curly_variant
 
     return resolved

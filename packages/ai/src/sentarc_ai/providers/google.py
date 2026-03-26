@@ -2,7 +2,6 @@
 Google Gemini provider.
 """
 from __future__ import annotations
-import os
 import json
 import asyncio
 from typing import AsyncIterator, Optional, Any
@@ -19,7 +18,7 @@ except ImportError:
     genai = None
 
 from ..types import (
-    Context, ModelDef, StreamEvent, Role,
+    Context, ModelDef, StreamEvent, Role, Message, StreamOptions, ToolUseContent,
     TokenUsage, ReasoningEffort,
     StartEvent, TextStartEvent, TextDeltaEvent, TextEndEvent,
     ThinkingStartEvent, ThinkingDeltaEvent, ThinkingEndEvent,
@@ -162,7 +161,6 @@ class GoogleProvider:
                usage = TokenUsage(
                    input_tokens=u.prompt_token_count,
                    output_tokens=u.candidates_token_count,
-                   total_tokens=u.total_token_count
                )
                yield StopEvent(stop_reason="end_turn", usage=usage)
             else:

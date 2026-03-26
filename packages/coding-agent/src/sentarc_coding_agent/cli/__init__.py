@@ -21,6 +21,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 async def _main_async(argv: List[str]) -> None:
     from sentarc_coding_agent.cli.args import parse_args, print_help
     from sentarc_coding_agent.config import VERSION, APP_NAME, get_agent_dir, get_custom_themes_dir
+    from sentarc_coding_agent.core.event_recorder import attach_event_recorder, create_event_log_path
     from sentarc_coding_agent.core.tools import create_tools, TOOL_NAMES
     from sentarc_coding_agent.core.system_prompt import build_system_prompt
     from sentarc_coding_agent.core.model_resolver import resolve_model
@@ -47,7 +48,8 @@ async def _main_async(argv: List[str]) -> None:
         return
 
     # --- Load settings ---
-    settings = load_settings()
+    cwd = os.getcwd()
+    settings = load_settings(cwd)
 
     # --- Resolve model ---
     provider = args.get("provider") or settings.provider or "google"
@@ -63,7 +65,6 @@ async def _main_async(argv: List[str]) -> None:
         sys.exit(1)
 
     # --- Build tools ---
-    cwd = os.getcwd()
     no_tools = args.get("no_tools", False)
     if no_tools:
         tool_names: List[str] = []
@@ -72,7 +73,14 @@ async def _main_async(argv: List[str]) -> None:
     else:
         tool_names = list(settings.tools or ["read", "bash", "edit", "write"])
 
-    tools = create_tools(cwd, tool_names) if tool_names else []
+    bash_security_profile = args.get("bash_security_profile") or settings.bash_security_profile or "standard"
+    bash_block_patterns = list(settings.bash_block_patterns or [])
+    bash_options = {
+        "security_profile": bash_security_profile,
+        "blocked_patterns": bash_block_patterns,
+    }
+
+    tools = create_tools(cwd, tool_names, bash_options=bash_options) if tool_names else []
 
     # --- Load skills ---
     skills: list = []
@@ -142,6 +150,20 @@ async def _main_async(argv: List[str]) -> None:
             "tools": all_agent_tools,
         },
     ))
+
+    event_log_enabled = bool(args.get("event_log") or settings.event_log_enabled)
+    if event_log_enabled:
+        event_log_path = args.get("event_log_path") or settings.event_log_path or create_event_log_path(get_agent_dir())
+        attach_event_recorder(
+            agent,
+            event_log_path,
+            metadata={
+                "provider": resolved_provider,
+                "model": model_id,
+                "mode": args.get("mode") or ("text" if args.get("print") else "interactive"),
+                "cwd": cwd,
+            },
+        )
 
     # --- Set up session ---
     from sentarc_coding_agent.core.session_manager import SessionManager

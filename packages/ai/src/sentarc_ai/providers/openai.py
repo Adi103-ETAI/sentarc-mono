@@ -1,6 +1,5 @@
 """OpenAI provider — supports both /completions and /responses endpoints."""
 from __future__ import annotations
-import os
 import json
 from typing import AsyncIterator, Optional, Any
 
@@ -14,7 +13,7 @@ from ..types import (
     StartEvent, TextStartEvent, TextDeltaEvent, TextEndEvent,
     ThinkingStartEvent, ThinkingDeltaEvent, ThinkingEndEvent,
     ToolUseStartEvent, ToolUseDeltaEvent, ToolUseEndEvent,
-    StopEvent, ErrorEvent, ToolUseContent,
+    StopEvent, ErrorEvent, ToolUseContent, ToolCallContent,
 )
 from ..env import get_env_api_key
 # ... (imports)
@@ -30,16 +29,16 @@ class OpenAIProvider:
         self,
         model: "ModelDef",
         context: "Context",
-        options: Optional[StreamOptions] = None, # Updated signature to match others
+        options: Optional[Any] = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream from OpenAI API."""
         
         reasoning = options.reasoning_effort if options else ReasoningEffort.NONE
         
-        api_key = get_env_api_key(model.provider)
+        resolved_api_key = getattr(options, "api_key", None) if options else None
+        api_key = resolved_api_key or get_env_api_key(model.provider)
         if not api_key:
-            yield ErrorEvent(error=f"No API key found for {model.provider}")
-            return
+            raise RuntimeError(f"No API key found for {model.provider}")
 
         client = AsyncOpenAI(
             api_key=api_key,
@@ -70,8 +69,9 @@ class OpenAIProvider:
                     "parameters": t.parameters
                 }
             } for t in context.tools]
-            if context.tool_choice:
-                 params["tool_choice"] = context.tool_choice
+            tool_choice = getattr(context, "tool_choice", None)
+            if tool_choice:
+                params["tool_choice"] = tool_choice
 
         if model.supports_thinking and reasoning != ReasoningEffort.NONE:
              params["reasoning_effort"] = reasoning.value
@@ -122,7 +122,6 @@ class OpenAIProvider:
                     usage = TokenUsage(
                         input_tokens=u.prompt_tokens,
                         output_tokens=u.completion_tokens,
-                        total_tokens=u.total_tokens
                     )
                     yield StopEvent(stop_reason="end_turn", usage=usage)
                     return
@@ -136,7 +135,7 @@ class OpenAIProvider:
                          arguments=args
                     ))
                 except json.JSONDecodeError:
-                    yield ErrorEvent(error="Failed to parse tool arguments")
+                    raise RuntimeError("Failed to parse tool arguments")
             
             if text_started:
                 yield TextEndEvent(text="")
@@ -144,7 +143,7 @@ class OpenAIProvider:
             yield StopEvent(stop_reason="end_turn", usage=TokenUsage())
             
         except Exception as e:
-            yield ErrorEvent(error=str(e))
+            raise RuntimeError(str(e))
 
 
 

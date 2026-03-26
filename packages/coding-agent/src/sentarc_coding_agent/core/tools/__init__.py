@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sentarc_coding_agent.core.tools.bash import BashTool, create_bash_tool
 from sentarc_coding_agent.core.tools.edit import EditTool, create_edit_tool
@@ -16,11 +16,21 @@ from sentarc_coding_agent.core.tools.write import WriteTool, create_write_tool
 TOOL_NAMES = ("read", "bash", "edit", "write", "grep", "find", "ls")
 
 
-def create_coding_tools(cwd: str) -> List:
+def _build_bash_tool(cwd: str, bash_options: Optional[Dict[str, Any]] = None):
+    opts = bash_options or {}
+    return create_bash_tool(
+        cwd,
+        command_prefix=opts.get("command_prefix"),
+        security_profile=opts.get("security_profile", "standard"),
+        blocked_patterns=opts.get("blocked_patterns") or [],
+    )
+
+
+def create_coding_tools(cwd: str, bash_options: Optional[Dict[str, Any]] = None) -> List:
     """Create default coding tools (read, bash, edit, write)."""
     return [
         create_read_tool(cwd),
-        create_bash_tool(cwd),
+        _build_bash_tool(cwd, bash_options=bash_options),
         create_edit_tool(cwd),
         create_write_tool(cwd),
     ]
@@ -36,11 +46,11 @@ def create_read_only_tools(cwd: str) -> List:
     ]
 
 
-def create_all_tools(cwd: str) -> Dict[str, object]:
+def create_all_tools(cwd: str, bash_options: Optional[Dict[str, Any]] = None) -> Dict[str, object]:
     """Create all tools configured for a specific working directory."""
     return {
         "read": create_read_tool(cwd),
-        "bash": create_bash_tool(cwd),
+        "bash": _build_bash_tool(cwd, bash_options=bash_options),
         "edit": create_edit_tool(cwd),
         "write": create_write_tool(cwd),
         "grep": create_grep_tool(cwd),
@@ -49,12 +59,16 @@ def create_all_tools(cwd: str) -> Dict[str, object]:
     }
 
 
-def create_tools(cwd: str, tool_names: Optional[List[str]] = None) -> List:
+def create_tools(
+    cwd: str,
+    tool_names: Optional[List[str]] = None,
+    bash_options: Optional[Dict[str, Any]] = None,
+) -> List:
     """Create a subset of tools by name."""
     if tool_names is None:
         tool_names = ["read", "bash", "edit", "write"]
 
-    all_tools = create_all_tools(cwd)
+    all_tools = create_all_tools(cwd, bash_options=bash_options)
     result = []
     for name in tool_names:
         tool = all_tools.get(name)

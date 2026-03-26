@@ -111,10 +111,18 @@ async def _run_loop(
         pending_messages = await config.get_steering_messages()
 
     while True:
+        if config.abort_signal and config.abort_signal.is_set():
+            yield AgentEndEvent(messages=new_messages)
+            return
+
         has_more_tool_calls = True
         steering_after_tools: Optional[List[AgentMessage]] = None
 
         while has_more_tool_calls or pending_messages:
+            if config.abort_signal and config.abort_signal.is_set():
+                yield AgentEndEvent(messages=new_messages)
+                return
+
             if not first_turn:
                 yield TurnStartEvent()
             else:
@@ -136,6 +144,10 @@ async def _run_loop(
                     message = event
                 else:
                     yield event
+
+            if config.abort_signal and config.abort_signal.is_set():
+                yield AgentEndEvent(messages=new_messages)
+                return
                     
             if not message:
                 raise RuntimeError("Failed to generate assistant message.")
@@ -157,7 +169,7 @@ async def _run_loop(
                     current_context.tools,
                     message,
                     config.get_steering_messages,
-                    config.abort_signal if hasattr(config, "abort_signal") else None,
+                    config.abort_signal,
                 ):
                     if isinstance(event, tuple):
                         tool_results.extend(event[0])
@@ -233,7 +245,36 @@ async def _stream_assistant_response(
     partial_message = None
     added_partial = False
 
-    async for event in response_stream:
+    response_iter = response_stream.__aiter__()
+    while True:
+        if config.abort_signal and config.abort_signal.is_set():
+            if hasattr(response_stream, "aclose"):
+                try:
+                    await response_stream.aclose() # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            return
+
+        next_task = asyncio.create_task(response_iter.__anext__())
+        while True:
+            done, _ = await asyncio.wait({next_task}, timeout=0.05)
+            if done:
+                break
+            if config.abort_signal and config.abort_signal.is_set():
+                next_task.cancel()
+                await asyncio.gather(next_task, return_exceptions=True)
+                if hasattr(response_stream, "aclose"):
+                    try:
+                        await response_stream.aclose() # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                return
+
+        try:
+            event = next_task.result()
+        except StopAsyncIteration:
+            return
+
         if event.type == "start":
             partial_message = event.partial
             context.messages.append(partial_message)
@@ -285,6 +326,9 @@ async def _execute_tool_calls(
     async def execute_single(index: int, tool_call: ToolCallContent):
         tool = next((t for t in (tools or []) if t.name == tool_call.name), None)
         try:
+            if abort_signal and abort_signal.is_set():
+                raise Exception("Tool execution cancelled")
+
             if not tool:
                 raise ValueError(f"Tool {tool_call.name} not found")
 
@@ -315,9 +359,57 @@ async def _execute_tool_calls(
                 True,
             )
 
-    task_results = await asyncio.gather(
-        *(execute_single(i, tc) for i, tc in enumerate(tool_calls))
-    )
+    pending = {
+        asyncio.create_task(execute_single(i, tc)): i
+        for i, tc in enumerate(tool_calls)
+    }
+    task_results = []
+    completed_indices = set()
+
+    while pending:
+        if abort_signal and abort_signal.is_set():
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending.keys(), return_exceptions=True)
+            pending.clear()
+            break
+
+        done, _ = await asyncio.wait(set(pending.keys()), timeout=0.05, return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            continue
+
+        for task in done:
+            index = pending.pop(task, None)
+            try:
+                result_tuple = task.result()
+                completed_indices.add(result_tuple[0])
+                task_results.append(result_tuple)
+            except Exception as e:
+                if index is None:
+                    continue
+                completed_indices.add(index)
+                task_results.append(
+                    (
+                        index,
+                        AgentToolResult(content=[TextContent(type="text", text=str(e))], details={}),
+                        True,
+                    )
+                )
+
+    if abort_signal and abort_signal.is_set():
+        for index, tool_call in enumerate(tool_calls):
+            if index in completed_indices:
+                continue
+            task_results.append(
+                (
+                    index,
+                    AgentToolResult(
+                        content=[TextContent(type="text", text="Tool execution cancelled")],
+                        details={},
+                    ),
+                    True,
+                )
+            )
 
     for index, result, is_error in sorted(task_results, key=lambda x: x[0]):
         tool_call = tool_calls[index]

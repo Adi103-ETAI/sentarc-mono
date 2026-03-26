@@ -90,6 +90,16 @@ def parse_args(
                         file=sys.stderr,
                     )
             result["tools"] = valid
+        elif arg == "--bash-security-profile" and i + 1 < len(argv):
+            i += 1
+            profile = argv[i].strip().lower()
+            if profile in ("standard", "read-only"):
+                result["bash_security_profile"] = profile
+            else:
+                print(
+                    f"Warning: Invalid bash security profile \"{profile}\". Valid values: standard, read-only",
+                    file=sys.stderr,
+                )
         elif arg == "--thinking" and i + 1 < len(argv):
             i += 1
             level = argv[i]
@@ -100,6 +110,11 @@ def parse_args(
                     f"Warning: Invalid thinking level \"{level}\". Valid values: {', '.join(VALID_THINKING_LEVELS)}",
                     file=sys.stderr,
                 )
+        elif arg == "--event-log":
+            result["event_log"] = True
+        elif arg == "--event-log-path" and i + 1 < len(argv):
+            i += 1
+            result["event_log_path"] = argv[i]
         elif arg in ("--print", "-p"):
             result["print"] = True
         elif arg == "--export" and i + 1 < len(argv):
@@ -178,7 +193,10 @@ Options:
   --no-tools                     Disable all built-in tools
   --tools <tools>                Comma-separated list of tools to enable
                                  Available: read, bash, edit, write, grep, find, ls
+  --bash-security-profile <mode> Bash tool policy: standard (default), read-only
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
+  --event-log                    Enable writing agent events to JSONL log file
+  --event-log-path <file>        Event log output path (default: ~/.arc/agent/events/...)
   --extension, -e <path>         Load an extension file
   --no-extensions, -ne           Disable extension discovery
   --skill <path>                 Load a skill file or directory

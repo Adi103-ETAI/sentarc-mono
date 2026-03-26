@@ -15,6 +15,8 @@ from sentarc_coding_agent.core.session_manager import SessionManager
 from sentarc_coding_agent.core.settings_manager import load_settings
 from sentarc_coding_agent.core.system_prompt import build_system_prompt
 from sentarc_coding_agent.core.tools import create_tools
+from sentarc_coding_agent.core.event_recorder import attach_event_recorder, create_event_log_path
+from sentarc_coding_agent.config import get_agent_dir
 
 
 async def run_agent_session(args: Dict[str, Any]) -> None:
@@ -23,7 +25,7 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
     Handles both interactive and print (non-interactive) modes.
     """
     cwd = os.getcwd()
-    settings = load_settings()
+    settings = load_settings(cwd)
 
     provider = args.get("provider") or settings.provider or "google"
     model_spec = args.get("model") or settings.model or "gemini-2.5-flash"
@@ -43,7 +45,13 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
         thinking_level = model_thinking
 
     # Build tools
-    tools = [] if no_tools else create_tools(cwd, tool_names)
+    bash_security_profile = args.get("bash_security_profile") or settings.bash_security_profile or "standard"
+    bash_block_patterns = list(settings.bash_block_patterns or [])
+    bash_options = {
+        "security_profile": bash_security_profile,
+        "blocked_patterns": bash_block_patterns,
+    }
+    tools = [] if no_tools else create_tools(cwd, tool_names, bash_options=bash_options)
 
     # Build system prompt
     custom_prompt = args.get("system_prompt")
@@ -88,6 +96,7 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
 
     agent = Agent(AgentOptions(
         convert_to_llm=convert_to_llm,
+        get_api_key=(lambda _provider: api_key) if api_key else None,
         initial_state={
             "system_prompt": system_prompt,
             "model": model_def,
@@ -96,6 +105,20 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
             "messages": history,
         },
     ))
+
+    event_log_enabled = bool(args.get("event_log") or settings.event_log_enabled)
+    if event_log_enabled:
+        event_log_path = args.get("event_log_path") or settings.event_log_path or create_event_log_path(get_agent_dir())
+        attach_event_recorder(
+            agent,
+            event_log_path,
+            metadata={
+                "provider": resolved_provider,
+                "model": model_id,
+                "mode": "fallback-interactive" if not print_mode else "fallback-print",
+                "cwd": cwd,
+            },
+        )
 
     def on_event(event: Any) -> None:
         """Handle agent events for display."""
@@ -128,14 +151,12 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
             session.append_message(user_msg)
 
         async def _run():
-            result_messages = await agent.prompt(
-                messages=[user_msg],
-                api_key=api_key,
-            )
-            if session and result_messages:
-                for msg in result_messages:
+            before_count = len(agent.state.messages)
+            await agent.prompt(user_msg)
+            if session:
+                for msg in agent.state.messages[before_count:]:
                     role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
-                    if role in ("assistant", "toolResult"):
+                    if role in ("assistant", "tool", "toolResult"):
                         session.append_message(msg if isinstance(msg, dict) else vars(msg))
 
         await _run()
@@ -156,15 +177,13 @@ async def run_agent_session(args: Dict[str, Any]) -> None:
                 if session:
                     session.append_message(user_msg)
 
-                result_messages = await agent.prompt(
-                    messages=[user_msg],
-                    api_key=api_key,
-                )
+                before_count = len(agent.state.messages)
+                await agent.prompt(user_msg)
 
-                if session and result_messages:
-                    for msg in result_messages:
+                if session:
+                    for msg in agent.state.messages[before_count:]:
                         role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
-                        if role in ("assistant", "toolResult"):
+                        if role in ("assistant", "tool", "toolResult"):
                             session.append_message(msg if isinstance(msg, dict) else vars(msg))
 
             except (KeyboardInterrupt, EOFError):

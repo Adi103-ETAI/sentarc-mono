@@ -2,7 +2,7 @@
 API provider registry.
 """
 from __future__ import annotations
-from typing import Callable, Any, Optional, Protocol, TypeVar
+from typing import Any, Optional, Protocol
 
 from .types import ModelDef, Context, StreamEvent, ReasoningEffort, Api
 from .providers.openai_completions import OpenAIProvider
@@ -31,14 +31,36 @@ class ApiProvider:
 
 _registry: dict[str, ApiProvider] = {}
 
+_API_ALIASES: dict[str, str] = {
+    # Generated/static model catalog aliases
+    "anthropic-messages": "anthropic",
+    "openai-completions": "openai",
+    "openai-chat-completions": "openai",
+    "google-generative-ai": "google",
+}
+
 def register_api_provider(provider: ApiProvider) -> None:
     """Register an API provider."""
-    # sentarc-mono logic checks for specific API type mismatch, handled here by simple map
+    if not getattr(provider, "api", None):
+        raise ValueError("ApiProvider.api must be a non-empty string")
+    if not callable(getattr(provider, "stream", None)):
+        raise TypeError("ApiProvider.stream must be callable")
+    if getattr(provider, "stream_simple", None) is not None and not callable(provider.stream_simple):
+        raise TypeError("ApiProvider.stream_simple must be callable when provided")
+
     _registry[provider.api] = provider
 
 def get_api_provider(api: str) -> Optional[ApiProvider]:
     """Get a registered API provider."""
-    return _registry.get(api)
+    provider = _registry.get(api)
+    if provider:
+        return provider
+
+    canonical_api = _API_ALIASES.get(api)
+    if canonical_api:
+        return _registry.get(canonical_api)
+
+    return None
 
 def clear_api_providers() -> None:
     """Clear all registered providers."""

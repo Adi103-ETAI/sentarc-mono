@@ -7,7 +7,7 @@ import os
 import signal as _signal
 import tempfile
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Literal
 
 from sentarc_coding_agent.core.tools.truncate import (
     DEFAULT_MAX_BYTES,
@@ -21,6 +21,10 @@ from sentarc_coding_agent.core.tools.truncate import (
 def _kill_process_tree(pid: int) -> None:
     """Kill a process and all its children."""
     try:
+        os.killpg(os.getpgid(pid), _signal.SIGTERM)
+    except Exception:
+        pass
+    try:
         import subprocess
         # Use kill -TERM first, then KILL
         subprocess.run(["kill", "-TERM", f"-{pid}"], capture_output=True)
@@ -31,6 +35,23 @@ def _kill_process_tree(pid: int) -> None:
     except Exception:
         pass
 
+
+def _kill_process_tree_hard(pid: int) -> None:
+    """Force kill a process group/process after graceful termination fails."""
+    try:
+        os.killpg(os.getpgid(pid), _signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        subprocess.run(["kill", "-KILL", f"-{pid}"], capture_output=True)
+    except Exception:
+        pass
+    try:
+        os.kill(pid, _signal.SIGKILL)
+    except Exception:
+        pass
+
 _DANGEROUS_PATTERNS = [
     r"\brm\s+-rf\s+/",
     r":\(\)\{\s*:\|:&\s*\};:",
@@ -38,10 +59,47 @@ _DANGEROUS_PATTERNS = [
     r"\bmkfs\.",
 ]
 
+_READ_ONLY_BLOCK_PATTERNS = [
+    r"\brm\b",
+    r"\bmv\b",
+    r"\bcp\b",
+    r"\bmkdir\b",
+    r"\brmdir\b",
+    r"\btouch\b",
+    r"\btruncate\b",
+    r"\bchmod\b",
+    r"\bchown\b",
+    r"\bchgrp\b",
+    r"\btee\b",
+    r">>",
+    r"[^2]>\s*[^&]",
+    r"\bapt\b",
+    r"\bapt-get\b",
+    r"\byum\b",
+    r"\bdnf\b",
+    r"\bpip\b",
+    r"\bnpm\b",
+    r"\byarn\b",
+    r"\bpnpm\b",
+    r"\bgit\s+(commit|push|reset|clean|rebase|merge|tag|branch\s+-D)\b",
+]
 
-def _validate_command(command: str) -> None:
+BashSecurityProfile = Literal["standard", "read-only"]
+
+
+def _validate_command(
+    command: str,
+    security_profile: BashSecurityProfile = "standard",
+    blocked_patterns: Optional[List[str]] = None,
+) -> None:
     """Raise if command contains clearly dangerous patterns."""
-    for pattern in _DANGEROUS_PATTERNS:
+    active_patterns = list(_DANGEROUS_PATTERNS)
+    if security_profile == "read-only":
+        active_patterns.extend(_READ_ONLY_BLOCK_PATTERNS)
+    if blocked_patterns:
+        active_patterns.extend(blocked_patterns)
+
+    for pattern in active_patterns:
         if re.search(pattern, command, flags=re.IGNORECASE):
             raise Exception(
                 f"Command contains potentially dangerous pattern: {pattern}\n"
@@ -72,9 +130,34 @@ class BashTool:
         "required": ["command"],
     }
 
-    def __init__(self, cwd: str, command_prefix: Optional[str] = None):
+    def __init__(
+        self,
+        cwd: str,
+        command_prefix: Optional[str] = None,
+        security_profile: BashSecurityProfile = "standard",
+        blocked_patterns: Optional[List[str]] = None,
+    ):
         self.cwd = cwd
         self.command_prefix = command_prefix
+        self.security_profile = security_profile
+        self.blocked_patterns = blocked_patterns or []
+
+    async def _terminate_with_escalation(self, proc: asyncio.subprocess.Process, grace_seconds: float = 0.2) -> None:
+        if proc.returncode is not None:
+            return
+        if proc.pid:
+            _kill_process_tree(proc.pid)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+            return
+        except asyncio.TimeoutError:
+            pass
+        if proc.pid:
+            _kill_process_tree_hard(proc.pid)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+        except asyncio.TimeoutError:
+            pass
 
     async def execute(
         self,
@@ -95,7 +178,11 @@ class BashTool:
         if not os.path.isdir(self.cwd):
             raise Exception(f"Working directory does not exist: {self.cwd}")
 
-        _validate_command(command)
+        _validate_command(
+            command,
+            security_profile=self.security_profile,
+            blocked_patterns=self.blocked_patterns,
+        )
 
         # We'll collect output chunks and optionally write to a temp file
         chunks: List[bytes] = []
@@ -167,16 +254,9 @@ class BashTool:
         async def wait_for_abort() -> None:
             nonlocal aborted
             if signal:
-                while not signal.is_set():
-                    await asyncio.sleep(0.05)
+                await signal.wait()
                 aborted = True
-                if proc.returncode is None:
-                    try:
-                        if proc.pid:
-                            _kill_process_tree(proc.pid)
-                            proc.kill()
-                    except Exception:
-                        pass
+                await self._terminate_with_escalation(proc)
 
         tasks = [asyncio.create_task(read_output())]
         if signal:
@@ -190,12 +270,7 @@ class BashTool:
                 await tasks[0]
         except asyncio.TimeoutError:
             timed_out = True
-            if proc.pid:
-                try:
-                    _kill_process_tree(proc.pid)
-                    proc.kill()
-                except Exception:
-                    pass
+            await self._terminate_with_escalation(proc)
         finally:
             for task in tasks:
                 if not task.done():
@@ -264,5 +339,15 @@ class BashTool:
         }
 
 
-def create_bash_tool(cwd: str, command_prefix: Optional[str] = None) -> BashTool:
-    return BashTool(cwd, command_prefix)
+def create_bash_tool(
+    cwd: str,
+    command_prefix: Optional[str] = None,
+    security_profile: BashSecurityProfile = "standard",
+    blocked_patterns: Optional[List[str]] = None,
+) -> BashTool:
+    return BashTool(
+        cwd,
+        command_prefix=command_prefix,
+        security_profile=security_profile,
+        blocked_patterns=blocked_patterns,
+    )

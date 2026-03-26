@@ -1,6 +1,6 @@
 [project]
 name = "sentarc-coding-agent"
-version = "0.1.3"
+version = "0.1.4"
 description = "Sentarc coding agent CLI (arc command)"
 requires-python = ">=3.11"
 dependencies = [

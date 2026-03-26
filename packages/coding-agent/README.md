@@ -69,6 +69,16 @@ arc "List all .py files in src/"
 # Non-interactive mode
 arc -p "Summarize this codebase"
 
+# One-off API key (useful in CI)
+arc --provider openai --model gpt-4o --api-key "$OPENAI_API_KEY" -p "Explain this diff"
+
+# Safer shell policy (blocks write-like bash commands)
+arc --bash-security-profile read-only
+
+# Optional event observability log
+arc --event-log
+arc --event-log --event-log-path /tmp/arc-events.jsonl
+
 # Different model
 arc --provider openai --model gpt-4o "Help me refactor"
 
@@ -105,6 +115,10 @@ Arc supports multiple LLM providers. Authenticate via API key environment variab
 arc --list-models
 arc --list-models claude  # Filter by search term
 ```
+
+Notes:
+- `--api-key` is used for the current command only and takes precedence over environment variables.
+- Session resume/continue keeps assistant and tool outputs in history for more reliable follow-up turns.
 
 **Custom models:** Add providers via `~/.arc/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google).
 
@@ -186,7 +200,23 @@ Edit settings directly in JSON:
 | Location | Scope |
 |----------|-------|
 | `~/.arc/agent/settings.json` | Global (all projects) |
-| `.arc/settings.json` | Project (overrides global) |
+| `.arc/settings.json` | Project (current working directory) |
+
+When both files exist, project settings override global settings field-by-field.
+
+Example: keep global defaults, but override only this repository in `.arc/settings.json`:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o",
+  "thinking": "medium",
+  "bashSecurityProfile": "read-only",
+  "eventLogEnabled": true
+}
+```
+
+In this example, any keys not listed continue to come from `~/.arc/agent/settings.json` (or built-in defaults).
 
 **Available settings:**
 
@@ -195,10 +225,25 @@ Edit settings directly in JSON:
   "provider": "google",
   "model": "gemini-2.5-flash",
   "thinking": "off",
-  "quiet_startup": false,
-  "tools": ["read", "bash", "edit", "write"]
+  "quietStartup": false,
+  "tools": ["read", "bash", "edit", "write"],
+  "bashSecurityProfile": "standard",
+  "bashBlockPatterns": [],
+  "eventLogEnabled": false,
+  "eventLogPath": null
 }
 ```
+
+`bashSecurityProfile` options:
+- `standard` (default): only blocks clearly dangerous command patterns.
+- `read-only`: additionally blocks write-like shell operations (for stricter environments).
+
+`bashBlockPatterns` lets you add project-specific regex blocks.
+
+Event observability:
+- `--event-log` writes agent event lifecycle records to JSONL.
+- `--event-log-path` sets a specific destination file.
+- If no path is provided, arc writes under `~/.arc/agent/events/`.
 
 ---
 
