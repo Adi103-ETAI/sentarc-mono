@@ -7,7 +7,7 @@ import os
 import signal as _signal
 import tempfile
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Literal
 
 from sentarc_coding_agent.core.tools.truncate import (
     DEFAULT_MAX_BYTES,
@@ -38,10 +38,47 @@ _DANGEROUS_PATTERNS = [
     r"\bmkfs\.",
 ]
 
+_READ_ONLY_BLOCK_PATTERNS = [
+    r"\brm\b",
+    r"\bmv\b",
+    r"\bcp\b",
+    r"\bmkdir\b",
+    r"\brmdir\b",
+    r"\btouch\b",
+    r"\btruncate\b",
+    r"\bchmod\b",
+    r"\bchown\b",
+    r"\bchgrp\b",
+    r"\btee\b",
+    r">>",
+    r"[^2]>\s*[^&]",
+    r"\bapt\b",
+    r"\bapt-get\b",
+    r"\byum\b",
+    r"\bdnf\b",
+    r"\bpip\b",
+    r"\bnpm\b",
+    r"\byarn\b",
+    r"\bpnpm\b",
+    r"\bgit\s+(commit|push|reset|clean|rebase|merge|tag|branch\s+-D)\b",
+]
 
-def _validate_command(command: str) -> None:
+BashSecurityProfile = Literal["standard", "read-only"]
+
+
+def _validate_command(
+    command: str,
+    security_profile: BashSecurityProfile = "standard",
+    blocked_patterns: Optional[List[str]] = None,
+) -> None:
     """Raise if command contains clearly dangerous patterns."""
-    for pattern in _DANGEROUS_PATTERNS:
+    active_patterns = list(_DANGEROUS_PATTERNS)
+    if security_profile == "read-only":
+        active_patterns.extend(_READ_ONLY_BLOCK_PATTERNS)
+    if blocked_patterns:
+        active_patterns.extend(blocked_patterns)
+
+    for pattern in active_patterns:
         if re.search(pattern, command, flags=re.IGNORECASE):
             raise Exception(
                 f"Command contains potentially dangerous pattern: {pattern}\n"
@@ -72,9 +109,17 @@ class BashTool:
         "required": ["command"],
     }
 
-    def __init__(self, cwd: str, command_prefix: Optional[str] = None):
+    def __init__(
+        self,
+        cwd: str,
+        command_prefix: Optional[str] = None,
+        security_profile: BashSecurityProfile = "standard",
+        blocked_patterns: Optional[List[str]] = None,
+    ):
         self.cwd = cwd
         self.command_prefix = command_prefix
+        self.security_profile = security_profile
+        self.blocked_patterns = blocked_patterns or []
 
     async def execute(
         self,
@@ -95,7 +140,11 @@ class BashTool:
         if not os.path.isdir(self.cwd):
             raise Exception(f"Working directory does not exist: {self.cwd}")
 
-        _validate_command(command)
+        _validate_command(
+            command,
+            security_profile=self.security_profile,
+            blocked_patterns=self.blocked_patterns,
+        )
 
         # We'll collect output chunks and optionally write to a temp file
         chunks: List[bytes] = []
@@ -264,5 +313,15 @@ class BashTool:
         }
 
 
-def create_bash_tool(cwd: str, command_prefix: Optional[str] = None) -> BashTool:
-    return BashTool(cwd, command_prefix)
+def create_bash_tool(
+    cwd: str,
+    command_prefix: Optional[str] = None,
+    security_profile: BashSecurityProfile = "standard",
+    blocked_patterns: Optional[List[str]] = None,
+) -> BashTool:
+    return BashTool(
+        cwd,
+        command_prefix=command_prefix,
+        security_profile=security_profile,
+        blocked_patterns=blocked_patterns,
+    )
