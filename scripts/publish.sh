@@ -13,14 +13,25 @@ echo "=== Sentarc PyPI Publisher ==="
 echo ""
 
 # Step 1: Get API token
-read -sp "Enter your PyPI API token: " TWINE_PASSWORD
-echo ""
-if [[ -z "$TWINE_PASSWORD" ]]; then
+if [[ -n "${TWINE_PASSWORD:-}" ]]; then
+    echo "Using TWINE_PASSWORD from environment"
+elif [[ -t 0 ]]; then
+    read -rsp "Enter your PyPI API token: " TWINE_PASSWORD
+    echo ""
+else
+    echo "Error: No interactive input available and TWINE_PASSWORD is not set"
+    echo "Set token via environment, for example:"
+    echo "  export TWINE_USERNAME=__token__"
+    echo "  export TWINE_PASSWORD='pypi-...'"
+    exit 1
+fi
+
+if [[ -z "${TWINE_PASSWORD:-}" ]]; then
     echo "Error: API token cannot be empty"
     exit 1
 fi
 
-export TWINE_USERNAME="__token__"
+export TWINE_USERNAME="${TWINE_USERNAME:-__token__}"
 export TWINE_PASSWORD
 
 # Step 2: Check if build and twine are installed
