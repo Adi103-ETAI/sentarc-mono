@@ -153,3 +153,31 @@ async def test_tool_execution():
 
     # Ensure tool execution details mapped into tool result
     assert messages[2].content[0].text == "Executed with test_val" # type: ignore
+
+
+@pytest.mark.asyncio
+async def test_abort_stops_slow_streaming_prompt():
+    async def slow_stream(_model, _context, _options=None, **_kwargs):
+        partial = AssistantMessage(
+            role="assistant",
+            content=[TextContent(type="text", text="")],
+            api="test",
+            provider="test",
+            model="mock",
+            usage={"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0},
+            stop_reason="stop",
+        )
+        yield type("Event", (), {"type": "start", "partial": partial})()
+        await asyncio.sleep(5)
+        yield type("Event", (), {"type": "done", "message": partial})()
+
+    agent = Agent(AgentOptions(stream_fn=slow_stream))
+    agent.set_model(MockModel())
+
+    task = asyncio.create_task(agent.prompt("please abort"))
+    await asyncio.sleep(0.1)
+    agent.abort()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert agent.state.is_streaming is False
+    assert len(agent.state.messages) >= 1

@@ -21,6 +21,10 @@ from sentarc_coding_agent.core.tools.truncate import (
 def _kill_process_tree(pid: int) -> None:
     """Kill a process and all its children."""
     try:
+        os.killpg(os.getpgid(pid), _signal.SIGTERM)
+    except Exception:
+        pass
+    try:
         import subprocess
         # Use kill -TERM first, then KILL
         subprocess.run(["kill", "-TERM", f"-{pid}"], capture_output=True)
@@ -28,6 +32,23 @@ def _kill_process_tree(pid: int) -> None:
         pass
     try:
         os.kill(pid, _signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def _kill_process_tree_hard(pid: int) -> None:
+    """Force kill a process group/process after graceful termination fails."""
+    try:
+        os.killpg(os.getpgid(pid), _signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        import subprocess
+        subprocess.run(["kill", "-KILL", f"-{pid}"], capture_output=True)
+    except Exception:
+        pass
+    try:
+        os.kill(pid, _signal.SIGKILL)
     except Exception:
         pass
 
@@ -120,6 +141,23 @@ class BashTool:
         self.command_prefix = command_prefix
         self.security_profile = security_profile
         self.blocked_patterns = blocked_patterns or []
+
+    async def _terminate_with_escalation(self, proc: asyncio.subprocess.Process, grace_seconds: float = 0.2) -> None:
+        if proc.returncode is not None:
+            return
+        if proc.pid:
+            _kill_process_tree(proc.pid)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+            return
+        except asyncio.TimeoutError:
+            pass
+        if proc.pid:
+            _kill_process_tree_hard(proc.pid)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+        except asyncio.TimeoutError:
+            pass
 
     async def execute(
         self,
@@ -216,16 +254,9 @@ class BashTool:
         async def wait_for_abort() -> None:
             nonlocal aborted
             if signal:
-                while not signal.is_set():
-                    await asyncio.sleep(0.05)
+                await signal.wait()
                 aborted = True
-                if proc.returncode is None:
-                    try:
-                        if proc.pid:
-                            _kill_process_tree(proc.pid)
-                            proc.kill()
-                    except Exception:
-                        pass
+                await self._terminate_with_escalation(proc)
 
         tasks = [asyncio.create_task(read_output())]
         if signal:
@@ -239,12 +270,7 @@ class BashTool:
                 await tasks[0]
         except asyncio.TimeoutError:
             timed_out = True
-            if proc.pid:
-                try:
-                    _kill_process_tree(proc.pid)
-                    proc.kill()
-                except Exception:
-                    pass
+            await self._terminate_with_escalation(proc)
         finally:
             for task in tasks:
                 if not task.done():

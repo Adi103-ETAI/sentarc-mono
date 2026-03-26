@@ -40,21 +40,41 @@ class TestExpandPath:
 
 
 class TestResolveToCwd:
-    def test_absolute_path(self):
-        result = resolve_to_cwd("/absolute/path", "/cwd")
-        assert result == "/absolute/path"
+    def test_absolute_path_inside_cwd(self, tmp_path):
+        test_file = tmp_path / "absolute.txt"
+        test_file.write_text("ok")
+        result = resolve_to_cwd(str(test_file), str(tmp_path))
+        assert result == str(test_file)
+
+    def test_absolute_path_outside_cwd_raises(self, tmp_path):
+        outside = tmp_path.parent / "outside.txt"
+        outside.write_text("nope")
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_to_cwd(str(outside), str(tmp_path))
 
     def test_relative_path(self):
         result = resolve_to_cwd("relative/file.txt", "/cwd")
         assert result == "/cwd/relative/file.txt"
 
-    def test_tilde_expansion(self):
-        result = resolve_to_cwd("~/file.txt", "/cwd")
-        assert result == str(Path.home() / "file.txt")
+    def test_tilde_outside_cwd_raises(self):
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_to_cwd("~/file.txt", "/cwd")
 
     def test_dot_path(self):
         result = resolve_to_cwd(".", "/cwd")
         assert result == "/cwd"
+
+    def test_parent_traversal_raises(self, tmp_path):
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_to_cwd("../outside.txt", str(tmp_path))
+
+    def test_prefix_sibling_escape_raises(self, tmp_path):
+        root = tmp_path / "xyz-root"
+        root.mkdir()
+        sibling = tmp_path / "xyz-root-alt"
+        sibling.mkdir()
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_to_cwd("../xyz-root-alt/file.txt", str(root))
 
 
 class TestResolveReadPath:
@@ -68,8 +88,40 @@ class TestResolveReadPath:
         result = resolve_read_path("nonexistent.txt", "/cwd")
         assert result == "/cwd/nonexistent.txt"
 
-    def test_absolute_existing_file(self, tmp_path):
+    def test_absolute_existing_file_outside_cwd_raises(self, tmp_path):
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello")
-        result = resolve_read_path(str(test_file), "/any/cwd")
-        assert result == str(test_file)
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_read_path(str(test_file), "/any/cwd")
+
+    def test_symlink_escape_outside_cwd_raises(self, tmp_path):
+        cwd = tmp_path / "root"
+        cwd.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "secret.txt"
+        target.write_text("secret")
+
+        link = cwd / "escape-link"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlink not supported in this environment")
+
+        with pytest.raises(Exception, match="Path traversal detected"):
+            resolve_read_path("escape-link", str(cwd))
+
+    def test_symlink_inside_cwd_is_allowed(self, tmp_path):
+        cwd = tmp_path / "root"
+        cwd.mkdir()
+        target = cwd / "safe.txt"
+        target.write_text("ok")
+
+        link = cwd / "safe-link"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlink not supported in this environment")
+
+        resolved = resolve_read_path("safe-link", str(cwd))
+        assert resolved == str(target)
