@@ -1,8 +1,8 @@
-# Release Notes (Draft)
+# Release Notes
 
 ## Version
 
-Proposed next tag: v0.1.4
+Version: v0.1.4
 Date: 2026-03-26
 Branch basis: shadow
 
@@ -93,4 +93,4 @@ This release focuses on runtime stability, provider compatibility hardening, saf
 
 ## Contributor-facing Note
 
-Use this draft as the body text for the next GitHub release. If the final tag differs from v0.1.4, update the Version section before publishing.
+This file reflects the published GitHub release notes for v0.1.4.
