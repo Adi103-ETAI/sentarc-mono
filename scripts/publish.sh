@@ -2,7 +2,7 @@
 # Publish sentarc packages to PyPI
 # Usage: ./scripts/publish.sh
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -25,7 +25,7 @@ export TWINE_PASSWORD
 
 # Step 2: Check if build and twine are installed
 echo "Checking dependencies..."
-pip install -q build twine || {
+python -m pip install -q build twine || {
     echo "Error: Failed to install build tools"
     exit 1
 }
@@ -47,6 +47,7 @@ for pkg in "${packages[@]}"; do
     echo "Building sentarc-$pkg..."
     cd "$ROOT_DIR/packages/$pkg"
     python -m build -q
+    python -m twine check dist/* >/dev/null
     echo "✓ sentarc-$pkg built"
 done
 
@@ -62,7 +63,24 @@ upload_order=("ai" "agent" "tui" "coding-agent")
 
 for pkg in "${upload_order[@]}"; do
     echo "Uploading sentarc-$pkg..."
-    twine upload --non-interactive packages/$pkg/dist/* 2>&1 | grep -v "Skipping" || true
+    set +e
+    upload_output=$(twine upload --non-interactive packages/$pkg/dist/* 2>&1)
+    upload_rc=$?
+    set -e
+
+    echo "$upload_output"
+
+    if [[ $upload_rc -ne 0 ]]; then
+        echo "✗ sentarc-$pkg upload failed"
+        if echo "$upload_output" | grep -qi "file already exists\|400 Bad Request"; then
+            echo "Hint: this version may already be published on PyPI."
+            echo "Bump versions first, then rebuild and upload:"
+            echo "  python scripts/sync-versions.py --bump patch"
+            echo "  ./scripts/publish.sh"
+        fi
+        exit $upload_rc
+    fi
+
     echo "✓ sentarc-$pkg uploaded"
     sleep 2  # Small delay between uploads
 done
